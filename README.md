@@ -27,7 +27,18 @@ export PUBLIC_BASE_URL=http://nas-host:8123
 docker compose up -d
 ```
 
-曲库以 `/music:ro` 挂载，配置目录为 `/config`。可以复制 `config/config.yaml.example` 为 `/config/config.yaml`，也可以直接设置 `PUBLIC_BASE_URL`、`MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT` 环境变量。
+曲库以 `/music:ro` 挂载，配置目录为 `/config`。应用读取 `/config/config.yaml`，可先复制
+`config/config.yaml.example` 为 `config/config.yaml`。配置文件使用扁平键：
+`xiaomi_user`、`xiaomi_password`、`public_base_url`、`music_root`、`host` 和 `port`。
+
+环境变量优先于 YAML 配置，空字符串不会覆盖文件值：
+
+- `XIAOMI_USER`、`XIAOMI_PASSWORD`、`PUBLIC_BASE_URL`、`MUSIC_ROOT`
+- 兼容变量 `MUSIC_DIR`（仅在未设置 `MUSIC_ROOT` 时使用）
+- 运行参数 `CONFIG_DIR`、`HOST`、`PORT`
+
+配置模块提供 `Settings.save()` 显式写回配置文件；服务启动不会自动回写。保存使用同目录临时文件原子替换，配置文件包含凭据时应限制为仅服务用户可读。
+也可以直接设置 `PUBLIC_BASE_URL`、`MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT`、`XIAOMI_USER` 和 `XIAOMI_PASSWORD` 环境变量。
 
 ## API
 

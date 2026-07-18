@@ -6,8 +6,8 @@
 
 ## 模块
 
-- `config.py`：读取 `/config/config.yaml` 和环境变量配置，校验音箱可访问的 `public_base_url`。
-- `service.py`：启动时扫描 `mp3/flac/m4a/wav`，生成稳定曲目 ID，缓存安全文件路径与 MIME 类型。
+- `config.py`：读取 `/config/config.yaml` 并应用环境变量覆盖，校验音箱可访问的 `public_base_url`，支持凭据配置和 `Settings.save()` 原子写回。
+- `service.py`：启动时扫描 `mp3/flac/m4a/wav`，生成稳定曲目 ID，缓存安全文件路径与 MIME 类型，并返回 Mock 播放状态。
 - `voice.py`：识别所有以“播放”开头的文本，可去掉可选“本地”前缀。
 - `routes.py`：健康检查、简单 HTML、曲目查询、支持 HTTP Range 的媒体文件、播放和语音接口。
 - `main.py`：组装 FastAPI 应用并提供命令行入口。

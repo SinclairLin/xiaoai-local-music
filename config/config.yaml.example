@@ -1,4 +1,6 @@
-# Copy this file to config.yaml and replace the public address with one that the speaker can reach.
+# Copy this file to config.yaml and replace the values as needed.
+xiaomi_user: "your-xiaomi-user"
+xiaomi_password: "your-xiaomi-password"
 public_base_url: "http://nas-host:8123"
 music_root: "/music"
 host: "0.0.0.0"
