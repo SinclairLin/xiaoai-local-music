@@ -7,13 +7,14 @@
 ## 模块
 
 - `config.py`：读取 `/config/config.yaml` 并应用环境变量覆盖，校验音箱可访问的 `public_base_url`，支持凭据配置和 `Settings.save()` 原子写回。
-- `service.py`：启动时扫描 `mp3/flac/m4a/wav`，生成稳定曲目 ID，缓存安全文件路径与 MIME 类型，并返回 Mock 播放状态。
+- `mina_client.py`：提供可注入的 Mina HTTP/mock client，安全持久化 token 和 cookies，并封装设备、TTS 与播放控制。
+- `service.py`：启动时扫描 `mp3/flac/m4a/wav`，生成稳定曲目 ID，缓存安全文件路径与 MIME 类型，维护内存播放队列并委托 Mina 播放。
 - `voice.py`：识别所有以“播放”开头的文本，可去掉可选“本地”前缀。
-- `routes.py`：健康检查、简单 HTML、曲目查询、支持 HTTP Range 的媒体文件、播放和语音接口。
+- `routes.py`：健康检查、配置读写（密码脱敏）、设备发现、曲目查询、支持 HTTP Range 的媒体文件、播放和队列控制接口。
 - `main.py`：组装 FastAPI 应用并提供命令行入口。
 
 应用 lifespan 在启动阶段调用一次曲库扫描。`PUBLIC_BASE_URL` 和 `MUSIC_ROOT` 分别覆盖 YAML 的同名配置，`MUSIC_DIR` 作为兼容旧配置；配置或扫描失败会阻止应用启动。缓存不自动刷新，曲库变更需要重启服务。公开 Track 的 `path` 使用稳定 ID 组成媒体 URL，不暴露文件系统路径。
 
 ## 风险与后续
 
-当前没有小爱平台协议适配、用户认证和数据库。服务应只暴露在可信内网；若开放到公网，需要增加认证和请求限流。后续可在不改变查询接口的前提下接入小爱播放调用。
+服务仍没有用户认证和数据库。Mina HTTP endpoint 采用可替换最小 REST 契约；真实部署应在可信内网使用，并按实际 Mina 服务调整 transport。若开放到公网，需要增加认证和请求限流。

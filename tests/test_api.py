@@ -32,6 +32,27 @@ def test_api_health_tracks_and_play(tmp_path) -> None:
         assert voice_response.json()["track"]["path"] == expected_url
 
 
+def test_config_api_redacts_password_and_preserves_it_on_masked_update(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        xiaomi_user="user",
+        xiaomi_password="secret",
+        mina_device_id="device-1",
+    )
+    with TestClient(create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url))) as client:
+        response = client.get("/api/config")
+        assert response.json()["xiaomi_password"] == "********"
+        assert "secret" not in response.text
+        updated = client.put("/api/config", json={"mina_device_id": "device-2", "xiaomi_password": "********"})
+        assert updated.status_code == 200
+        assert updated.json()["mina_device_id"] == "device-2"
+    assert "secret" in (config_dir / "config.yaml").read_text(encoding="utf-8")
+
+
 def test_tracks_query_does_not_match_media_url_parts(tmp_path: Path) -> None:
     (tmp_path / "稻香.mp3").touch()
     public_base_url = "http://speaker-host:8123"
