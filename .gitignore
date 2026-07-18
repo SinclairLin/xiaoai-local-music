@@ -13,3 +13,4 @@ config/*
 tests/music/
 test/music/
 compose.yml
+AGENTS.md
