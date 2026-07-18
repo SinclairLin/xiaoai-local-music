@@ -9,3 +9,6 @@ config/*
 !config/.gitkeep
 
 .codex/config.toml
+tests/music/
+test/music/
+compose.yml
