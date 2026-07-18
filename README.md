@@ -40,6 +40,8 @@ docker compose up -d
 配置模块提供 `Settings.save()` 显式写回配置文件；服务启动不会自动回写。保存使用同目录临时文件原子替换，配置文件包含凭据时应限制为仅服务用户可读。
 也可以直接设置 `PUBLIC_BASE_URL`、`MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT`、`XIAOMI_USER` 和 `XIAOMI_PASSWORD` 环境变量。
 
+服务会在 `/config/library.db` 中维护曲库索引。容器内运行用户需要对配置目录有写权限；曲目新增、删除或修改后，查询前会自动增量刷新索引。音频标签和时长由 `mutagen` 读取，缺失标签会回退为空值或文件名。
+
 ## API
 
 - `GET /api/tracks?q=关键词`：查询曲目。
