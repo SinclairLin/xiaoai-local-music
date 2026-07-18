@@ -6,9 +6,11 @@ venv/
 *.egg-info/
 .env
 config/*
-!config/.gitkeep
+!config/config.yaml.example
 
 .codex/config.toml
+.claude/
+AGENTS.md
 tests/music/
 test/music/
 compose.yml

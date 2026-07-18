@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    MUSIC_DIR=/music \
+    MUSIC_ROOT=/music \
     CONFIG_DIR=/config \
     PORT=8123
 
@@ -17,4 +17,3 @@ USER appuser
 
 EXPOSE 8123
 CMD ["python", "-m", "app.main"]
-

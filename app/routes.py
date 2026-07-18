@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from .models import PlayRequest, VoiceRequest
 from .voice import parse_play_command
@@ -21,6 +21,18 @@ def index() -> str:
 @router.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.api_route("/media/by-id/{track_id}", methods=["GET", "HEAD"], response_class=FileResponse)
+def media_by_id(track_id: str, request: Request) -> FileResponse:
+    media_file = request.app.state.service.get_media_file(track_id)
+    if media_file is None:
+        raise HTTPException(status_code=404, detail="track not found")
+    return FileResponse(
+        media_file.path,
+        media_type=media_file.media_type,
+        stat_result=media_file.stat_result,
+    )
 
 
 @router.get("/api/tracks")
@@ -46,4 +58,3 @@ def voice(payload: VoiceRequest, request: Request) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="track not found")
     track = request.app.state.service.play(matches[0].id)
     return {"ok": True, "command": title, "status": "mock_playing", "track": track}
-

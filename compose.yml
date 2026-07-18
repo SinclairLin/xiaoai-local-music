@@ -1,6 +1,8 @@
 services:
   xiaoai-local-music:
-    image: ghcr.io/sinclairlin/xiaoai-local-music:latest
+    build:
+      context: .
+    image: xiaoai-local-music:local
     container_name: xiaoai-local-music
     restart: unless-stopped
     ports:
