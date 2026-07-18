@@ -22,6 +22,7 @@ def clear_config_env(monkeypatch) -> None:
 def test_defaults_without_yaml(monkeypatch, tmp_path) -> None:
     clear_config_env(monkeypatch)
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
 
     settings = Settings.from_env()
 
@@ -66,7 +67,10 @@ def test_yaml_values_and_environment_overrides(monkeypatch, tmp_path) -> None:
 
 def test_empty_environment_values_do_not_override_yaml(monkeypatch, tmp_path) -> None:
     clear_config_env(monkeypatch)
-    (tmp_path / "config.yaml").write_text("music_root: /yaml-music\nxiaomi_user: yaml-user\n", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text(
+        "music_root: /yaml-music\nxiaomi_user: yaml-user\npublic_base_url: http://yaml.example\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("MUSIC_ROOT", "")
     monkeypatch.setenv("XIAOMI_USER", "")
@@ -82,12 +86,13 @@ def test_music_root_precedes_legacy_music_dir(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("MUSIC_DIR", "/legacy")
     monkeypatch.setenv("MUSIC_ROOT", "/canonical")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
 
     assert Settings.from_env().music_root == "/canonical"
 
 
 def test_legacy_settings_constructor_alias(tmp_path) -> None:
-    settings = Settings(music_dir=tmp_path)
+    settings = Settings(public_base_url="http://testserver", music_dir=tmp_path)
 
     assert settings.music_root == str(tmp_path)
     assert settings.music_dir == str(tmp_path)
@@ -167,6 +172,7 @@ def test_create_app_uses_music_root(monkeypatch, tmp_path) -> None:
     (music_root / "稻香.mp3").touch()
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MUSIC_ROOT", str(music_root))
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
 
     app = create_app()
 
