@@ -14,7 +14,7 @@ python -m app.main
 
 访问 <http://127.0.0.1:8123/>；健康检查为 `/healthz`。
 
-服务启动时会读取 `/config/config.yaml` 中的 `music_root` 和 `public_base_url` 并扫描曲库，扫描结果缓存在内存中。`public_base_url` 必须是音箱可访问的绝对 HTTP(S) 地址，也可用环境变量 `PUBLIC_BASE_URL` 覆盖。环境变量 `MUSIC_ROOT` 优先级最高，旧变量 `MUSIC_DIR` 仍可用；如果公开地址缺失、非法或曲库目录不存在、不可读，服务会启动失败。启动后的文件变化需要重启服务才能进入曲目列表。
+服务启动时会读取 `/config/config.yaml` 中的 `music_root` 和 `public_base_url` 并扫描曲库，扫描结果缓存在内存中。`public_base_url` 必须是音箱可访问的绝对 HTTP(S) 地址，也可用环境变量 `PUBLIC_BASE_URL` 覆盖。环境变量 `MUSIC_ROOT` 优先级最高，旧变量 `MUSIC_DIR` 仍可用；如果公开地址缺失、非法或曲库目录不存在、不是目录，服务会启动失败。曲库目录不可读时服务仍会启动，但曲目列表为空。启动后的文件变化需要重启服务才能进入曲目列表。
 
 ## Docker Compose
 
@@ -40,7 +40,7 @@ docker compose up -d
 配置模块提供 `Settings.save()` 显式写回配置文件；服务启动不会自动回写。保存使用同目录临时文件原子替换，配置文件包含凭据时应限制为仅服务用户可读。
 也可以直接设置 `PUBLIC_BASE_URL`、`MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT`、`XIAOMI_USER` 和 `XIAOMI_PASSWORD` 环境变量。
 
-服务会在 `/config/library.db` 中维护曲库索引。容器内运行用户需要对配置目录有写权限；曲目新增、删除或修改后，查询前会自动增量刷新索引。音频标签和时长由 `mutagen` 读取，缺失标签会回退为空值或文件名。
+曲库索引保存在内存中，不落盘；曲目新增、删除或修改后需要重启服务才会生效。当前版本不解析音频标签，曲目标题取自文件名；配置目录仅在调用 `Settings.save()` 写回配置时需要写权限。
 
 ## API
 
