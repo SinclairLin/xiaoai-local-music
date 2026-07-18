@@ -13,6 +13,8 @@ python -m app.main
 
 访问 <http://127.0.0.1:8123/>；健康检查为 `/healthz`。
 
+服务启动时会读取 `/config/config.yaml` 中的 `music_root` 并扫描曲库，扫描结果缓存在内存中。环境变量 `MUSIC_ROOT` 优先级最高，旧变量 `MUSIC_DIR` 仍可用；如果曲库目录不存在或不可读，服务会启动失败。启动后的文件变化需要重启服务才能进入曲目列表。
+
 ## Docker Compose
 
 部署前先复制模板：`cp compose.yml.example compose.yml`（`compose.yml` 已在 `.gitignore` 中，用于放本机路径）。模板默认使用 `ghcr.io/sinclairlin/xiaoai-local-music:latest`，并映射端口 `8123`。NAS 上可按需设置：
@@ -23,7 +25,7 @@ export CONFIG_HOST_DIR=/mnt/pool1/home/linzx6/xiaoai-local-music/config
 docker compose up -d
 ```
 
-曲库以 `/music:ro` 挂载，配置目录为 `/config`。也可以直接设置 `MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT` 环境变量。
+曲库以 `/music:ro` 挂载，配置目录为 `/config`。也可以直接设置 `MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT` 环境变量。
 
 ## API
 

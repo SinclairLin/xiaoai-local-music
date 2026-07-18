@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI
 
@@ -12,9 +14,16 @@ from .service import MusicService
 
 def create_app(settings: Settings | None = None, service: MusicService | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
-    application = FastAPI(title="XiaoAI Local Music", version="0.0.1")
+    configured_service = service or MusicService(settings.music_root)
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        application.state.service.scan()
+        yield
+
+    application = FastAPI(title="XiaoAI Local Music", version="0.0.1", lifespan=lifespan)
     application.state.settings = settings
-    application.state.service = service or MusicService(settings.music_dir)
+    application.state.service = configured_service
     application.include_router(router)
     return application
 
