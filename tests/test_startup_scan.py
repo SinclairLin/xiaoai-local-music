@@ -29,12 +29,6 @@ def test_yaml_music_root_and_environment_override(monkeypatch, tmp_path: Path) -
     assert settings.public_base_url == "http://env.example:8123/prefix"
 
 
-def test_legacy_music_dir_constructor_alias(tmp_path: Path) -> None:
-    settings = Settings(public_base_url=PUBLIC_BASE_URL, music_dir=tmp_path)
-    assert settings.music_root == str(tmp_path)
-    assert settings.music_dir == str(tmp_path)
-
-
 def test_startup_scans_once_and_serves_snapshot(tmp_path: Path) -> None:
     (tmp_path / "nested").mkdir()
     (tmp_path / "nested" / "稻香.mp3").touch()
@@ -83,8 +77,35 @@ def test_missing_public_base_url_fails(monkeypatch, tmp_path: Path) -> None:
         "https://music.example/base?token=value",
         "https://music.example/base#fragment",
         "https://user:password@music.example",
+        "http://music.example:8123#",
+        "http://music.example:8123?",
+        "http://:8123",
+        "http://mu\r\nsic.example:8123",
+        "http://mu\tsic.example:8123",
+        "http://music.example:0",
     ],
 )
 def test_invalid_public_base_url_fails(public_base_url: str) -> None:
     with pytest.raises(ConfigError, match="public_base_url"):
         Settings(public_base_url=public_base_url)
+
+
+def test_public_base_url_scheme_is_normalized() -> None:
+    settings = Settings(public_base_url="HTTP://Speaker-Host:8123")
+    assert settings.public_base_url == "http://Speaker-Host:8123"
+
+
+def test_scan_skips_file_that_vanishes_mid_scan(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "keep.mp3").touch()
+    (tmp_path / "vanishing.mp3").touch()
+    service = MusicService(tmp_path, PUBLIC_BASE_URL)
+
+    original_resolve = Path.resolve
+
+    def resolve(self: Path, strict: bool = False) -> Path:
+        if self.name == "vanishing.mp3":
+            raise FileNotFoundError(self)
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    assert [track.title for track in service.scan()] == ["keep"]

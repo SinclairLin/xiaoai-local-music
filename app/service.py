@@ -47,6 +47,7 @@ class MusicService:
         self.public_base_url = public_base_url.rstrip("/")
         self._music_root: Path | None = None
         self._entries: tuple[_TrackEntry, ...] | None = None
+        self._entries_by_id: dict[str, _TrackEntry] = {}
 
     def scan(self) -> list[Track]:
         """Build and store a deterministic snapshot of the music directory."""
@@ -56,34 +57,46 @@ class MusicService:
         try:
             music_root = self.music_dir.resolve(strict=True)
             paths = sorted(self.music_dir.rglob("*"))
-            entries: list[_TrackEntry] = []
-            for path in paths:
-                suffix = path.suffix.lower()
-                if not path.is_file() or suffix not in SUPPORTED_SUFFIXES:
-                    continue
-                resolved_path = path.resolve(strict=True)
-                if not resolved_path.is_relative_to(music_root):
-                    continue
-                relative = path.relative_to(self.music_dir).as_posix()
-                track_id = hashlib.sha1(relative.encode("utf-8")).hexdigest()[:12]
-                track = Track(
-                    id=track_id,
-                    title=path.stem,
-                    path=f"{self.public_base_url}/media/by-id/{track_id}",
-                )
-                entries.append(
-                    _TrackEntry(
-                        track=track,
-                        file_path=resolved_path,
-                        media_type=MEDIA_TYPES[suffix],
-                        search_text=f"{path.stem} {relative} /music/{relative} {track.path}".casefold(),
-                    )
-                )
         except OSError as exc:
             raise MusicScanError(f"cannot scan music root {self.music_dir}: {exc}") from exc
 
+        entries: list[_TrackEntry] = []
+        entries_by_id: dict[str, _TrackEntry] = {}
+        for path in paths:
+            suffix = path.suffix.lower()
+            # A file may vanish between the rglob listing and these checks;
+            # skip it instead of failing the whole scan.
+            try:
+                if not path.is_file() or suffix not in SUPPORTED_SUFFIXES:
+                    continue
+                resolved_path = path.resolve(strict=True)
+            except OSError:
+                continue
+            if not resolved_path.is_relative_to(music_root):
+                continue
+            relative = path.relative_to(self.music_dir).as_posix()
+            track_id = hashlib.sha1(relative.encode("utf-8")).hexdigest()[:12]
+            if track_id in entries_by_id:
+                raise MusicScanError(
+                    f"track id collision between {entries_by_id[track_id].file_path} and {resolved_path}"
+                )
+            track = Track(
+                id=track_id,
+                title=path.stem,
+                path=f"{self.public_base_url}/media/by-id/{track_id}",
+            )
+            entry = _TrackEntry(
+                track=track,
+                file_path=resolved_path,
+                media_type=MEDIA_TYPES[suffix],
+                search_text=f"{path.stem} {relative}".casefold(),
+            )
+            entries.append(entry)
+            entries_by_id[track_id] = entry
+
         self._music_root = music_root
         self._entries = tuple(entries)
+        self._entries_by_id = entries_by_id
         return [entry.track for entry in self._entries]
 
     def _snapshot(self) -> tuple[_TrackEntry, ...]:
@@ -100,11 +113,13 @@ class MusicService:
         return [entry.track for entry in entries if needle in entry.search_text]
 
     def get_track(self, track_id: str) -> Track | None:
-        entry = next((entry for entry in self._snapshot() if entry.track.id == track_id), None)
+        self._snapshot()
+        entry = self._entries_by_id.get(track_id)
         return entry.track if entry is not None else None
 
     def get_media_file(self, track_id: str) -> MediaFile | None:
-        entry = next((entry for entry in self._snapshot() if entry.track.id == track_id), None)
+        self._snapshot()
+        entry = self._entries_by_id.get(track_id)
         if entry is None or self._music_root is None:
             return None
 
