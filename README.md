@@ -15,7 +15,7 @@ python -m app.main
 
 ## Docker Compose
 
-`compose.yml` 默认使用 `ghcr.io/SinclairLin/xiaoai-local-music:latest`，并映射端口 `8123`。NAS 上可按需设置：
+`compose.yml` 默认使用 `ghcr.io/sinclairlin/xiaoai-local-music:latest`，并映射端口 `8123`。NAS 上可按需设置：
 
 ```bash
 export MUSIC_HOST_DIR=/mnt/pool1/personal/media/音乐
@@ -38,4 +38,3 @@ docker compose up -d
 ## 风险
 
 服务默认假设运行在可信内网，没有认证和限流；不要直接暴露到公网。音频目录只读挂载，配置和日志目录仍需按 NAS 权限策略管理。
-

@@ -9,7 +9,7 @@ Bank：`headroom-dashboard`（见 `.codex/config.toml` 的 MCP 配置）。
 约束：
 - 曲库：本地 NAS 目录
 - 语音：劫持所有「播放 xxx」（不要求「本地」前缀）
-- 镜像：public，ghcr.io/SinclairLin/xiaoai-local-music
+- 镜像：public，ghcr.io/sinclairlin/xiaoai-local-music
 - NAS ssh信息：linzx6@10.64.0.1，使用公钥认证
 - 默认端口：8123
 - NAS 部署目录：/mnt/pool1/home/linzx6/xiaoai-local-music
