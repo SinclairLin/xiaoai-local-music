@@ -9,3 +9,5 @@ config/*
 !config/.gitkeep
 
 .codex/config.toml
+tests/
+compose.yml

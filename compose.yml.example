@@ -10,5 +10,5 @@ services:
       CONFIG_DIR: /config
       PORT: "8123"
     volumes:
-      - ./test/music:/music:ro
-      - ./config:/config
+      - ${MUSIC_HOST_DIR}:/music:ro
+      - ${CONFIG_HOST_DIR}:/config
