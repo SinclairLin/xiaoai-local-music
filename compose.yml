@@ -1,0 +1,16 @@
+services:
+  xiaoai-local-music:
+    build:
+      context: .
+    image: xiaoai-local-music:local
+    container_name: xiaoai-local-music
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+    environment:
+      MUSIC_ROOT: /music
+      CONFIG_DIR: /config
+      PORT: "8123"
+    volumes:
+      - ${MUSIC_HOST_DIR:-/mnt/pool1/personal/media/音乐}:/music:ro
+      - ${CONFIG_HOST_DIR:-./config}:/config
