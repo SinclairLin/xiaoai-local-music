@@ -14,7 +14,7 @@ from .service import MusicService
 
 def create_app(settings: Settings | None = None, service: MusicService | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
-    configured_service = service or MusicService(settings.music_root)
+    configured_service = service or MusicService(settings.music_root, settings.public_base_url)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):

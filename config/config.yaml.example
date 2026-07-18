@@ -1,0 +1,5 @@
+# Copy this file to config.yaml and replace the public address with one that the speaker can reach.
+public_base_url: "http://nas-host:8123"
+music_root: "/music"
+host: "0.0.0.0"
+port: 8123

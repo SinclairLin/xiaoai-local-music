@@ -8,12 +8,13 @@ NAS Docker 上的小爱本地音乐桥接服务骨架。它扫描只读挂载的
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+export PUBLIC_BASE_URL=http://192.168.1.10:8123
 python -m app.main
 ```
 
 访问 <http://127.0.0.1:8123/>；健康检查为 `/healthz`。
 
-服务启动时会读取 `/config/config.yaml` 中的 `music_root` 并扫描曲库，扫描结果缓存在内存中。环境变量 `MUSIC_ROOT` 优先级最高，旧变量 `MUSIC_DIR` 仍可用；如果曲库目录不存在或不可读，服务会启动失败。启动后的文件变化需要重启服务才能进入曲目列表。
+服务启动时会读取 `/config/config.yaml` 中的 `music_root` 和 `public_base_url` 并扫描曲库，扫描结果缓存在内存中。`public_base_url` 必须是音箱可访问的绝对 HTTP(S) 地址，也可用环境变量 `PUBLIC_BASE_URL` 覆盖。环境变量 `MUSIC_ROOT` 优先级最高，旧变量 `MUSIC_DIR` 仍可用；如果公开地址缺失、非法或曲库目录不存在、不可读，服务会启动失败。启动后的文件变化需要重启服务才能进入曲目列表。
 
 ## Docker Compose
 
@@ -22,16 +23,20 @@ python -m app.main
 ```bash
 export MUSIC_HOST_DIR=/mnt/pool1/personal/media/音乐
 export CONFIG_HOST_DIR=/mnt/pool1/home/linzx6/xiaoai-local-music/config
+export PUBLIC_BASE_URL=http://nas-host:8123
 docker compose up -d
 ```
 
-曲库以 `/music:ro` 挂载，配置目录为 `/config`。也可以直接设置 `MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT` 环境变量。
+曲库以 `/music:ro` 挂载，配置目录为 `/config`。可以复制 `config/config.yaml.example` 为 `/config/config.yaml`，也可以直接设置 `PUBLIC_BASE_URL`、`MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT` 环境变量。
 
 ## API
 
 - `GET /api/tracks?q=关键词`：查询曲目。
+- `GET /media/by-id/{track_id}`：获取音频文件，支持 HTTP Range。
 - `POST /api/play`：请求体 `{ "track_id": "..." }`，返回 Mock 播放状态。
 - `POST /api/voice`：请求体 `{ "text": "播放 稻香" }`。
+
+曲目响应中的 `path` 是 `{public_base_url}/media/by-id/{track_id}`，可直接作为后续交给音箱的媒体 URL。
 
 ## GHCR
 

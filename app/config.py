@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -48,6 +49,31 @@ def _port_value(value: Any, source: str) -> int:
     return value
 
 
+def _public_base_url_value(value: Any, source: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"{source} must be a non-empty absolute HTTP(S) URL")
+
+    normalized = value.strip().rstrip("/")
+    try:
+        parsed = urlsplit(normalized)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise ConfigError(f"{source} must be a valid absolute HTTP(S) URL") from exc
+
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ConfigError(f"{source} must be a valid absolute HTTP(S) URL")
+    if parsed.query or parsed.fragment:
+        raise ConfigError(f"{source} must not include a query string or fragment")
+    return normalized
+
+
 @dataclass(frozen=True)
 class Settings:
     music_root: str = "/music"
@@ -55,8 +81,15 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8123
     music_dir: str | Path | None = field(default=None, repr=False, compare=False)
+    public_base_url: str = ""
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "public_base_url",
+            _public_base_url_value(self.public_base_url, "settings field 'public_base_url'"),
+        )
+
         if self.music_dir is not None:
             if self.music_root != "/music" and os.fspath(self.music_root) != os.fspath(self.music_dir):
                 raise ConfigError("music_root and legacy music_dir disagree")
@@ -84,11 +117,13 @@ class Settings:
         yaml_music_root = data.get("music_root", data.get("music_dir", cls.music_root))
         music_root = _string_value({"music_root": yaml_music_root}, "music_root", cls.music_root)
         host = _string_value(data, "host", cls.host)
+        public_base_url = data.get("public_base_url")
         yaml_port = data.get("port", cls.port)
         port = _port_value(yaml_port, "config key 'port'")
 
         music_root = _non_empty_env("MUSIC_ROOT") or _non_empty_env("MUSIC_DIR") or music_root
         host = _non_empty_env("HOST") or host
+        public_base_url = _non_empty_env("PUBLIC_BASE_URL") or public_base_url
         env_port = _non_empty_env("PORT")
         if env_port is not None:
             try:
@@ -97,6 +132,7 @@ class Settings:
                 raise ConfigError("environment variable PORT must be an integer") from exc
 
         return cls(
+            public_base_url=_public_base_url_value(public_base_url, "public_base_url"),
             music_root=music_root,
             config_dir=config_dir,
             host=host,

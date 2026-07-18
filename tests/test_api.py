@@ -1,16 +1,124 @@
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
+from app.config import Settings
 from app.main import create_app
 from app.service import MusicService
 
 
 def test_api_health_tracks_and_play(tmp_path) -> None:
-    (tmp_path / "稻香.mp3").touch()
-    with TestClient(create_app(service=MusicService(tmp_path))) as client:
+    (tmp_path / "周杰伦").mkdir()
+    (tmp_path / "周杰伦" / "稻香.mp3").touch()
+    public_base_url = "https://music.example/proxy"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+    service = MusicService(tmp_path, public_base_url)
+
+    with TestClient(create_app(settings=settings, service=service)) as client:
         assert client.get("/healthz").json() == {"status": "ok"}
         tracks = client.get("/api/tracks").json()["tracks"]
         assert tracks[0]["title"] == "稻香"
         track_id = tracks[0]["id"]
-        assert client.post("/api/play", json={"track_id": track_id}).status_code == 200
+        expected_url = f"{public_base_url}/media/by-id/{track_id}"
+        assert tracks[0]["path"] == expected_url
+        assert client.get("/api/tracks", params={"q": "周杰伦"}).json()["tracks"][0]["id"] == track_id
+        play_response = client.post("/api/play", json={"track_id": track_id})
+        assert play_response.status_code == 200
+        assert play_response.json()["track"]["path"] == expected_url
         assert client.post("/api/play", json={"track_id": "missing"}).status_code == 404
-        assert client.post("/api/voice", json={"text": "播放 稻香"}).status_code == 200
+        voice_response = client.post("/api/voice", json={"text": "播放 稻香"})
+        assert voice_response.status_code == 200
+        assert voice_response.json()["track"]["path"] == expected_url
+
+
+@pytest.mark.parametrize(
+    ("suffix", "media_type"),
+    [
+        (".mp3", "audio/mpeg"),
+        (".flac", "audio/flac"),
+        (".m4a", "audio/mp4"),
+        (".wav", "audio/wav"),
+    ],
+)
+def test_media_full_response_has_canonical_content_type(
+    tmp_path: Path, suffix: str, media_type: str
+) -> None:
+    payload = b"0123456789"
+    (tmp_path / f"track{suffix}").write_bytes(payload)
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(tmp_path, public_base_url))
+    ) as client:
+        track = client.get("/api/tracks").json()["tracks"][0]
+        response = client.get(f"/media/by-id/{track['id']}")
+
+    assert response.status_code == 200
+    assert response.content == payload
+    assert response.headers["content-type"] == media_type
+    assert response.headers["content-length"] == str(len(payload))
+    assert response.headers["accept-ranges"] == "bytes"
+    assert "etag" in response.headers
+    assert "last-modified" in response.headers
+
+
+def test_media_supports_byte_ranges_and_rejects_unsatisfiable_range(tmp_path: Path) -> None:
+    payload = b"0123456789"
+    (tmp_path / "track.mp3").write_bytes(payload)
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(tmp_path, public_base_url))
+    ) as client:
+        track_id = client.get("/api/tracks").json()["tracks"][0]["id"]
+        media_url = f"/media/by-id/{track_id}"
+
+        for range_header, expected_body, expected_range in (
+            ("bytes=2-5", b"2345", "bytes 2-5/10"),
+            ("bytes=7-", b"789", "bytes 7-9/10"),
+            ("bytes=-3", b"789", "bytes 7-9/10"),
+        ):
+            response = client.get(media_url, headers={"Range": range_header})
+            assert response.status_code == 206
+            assert response.content == expected_body
+            assert response.headers["content-range"] == expected_range
+            assert response.headers["content-length"] == str(len(expected_body))
+            assert response.headers["content-type"] == "audio/mpeg"
+            assert response.headers["accept-ranges"] == "bytes"
+
+        response = client.get(media_url, headers={"Range": "bytes=99-100"})
+        assert response.status_code == 416
+        assert response.headers["content-range"] == "bytes */10"
+
+
+def test_media_returns_404_for_unknown_or_removed_track(tmp_path: Path) -> None:
+    track_path = tmp_path / "track.mp3"
+    track_path.write_bytes(b"music")
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(tmp_path, public_base_url))
+    ) as client:
+        track_id = client.get("/api/tracks").json()["tracks"][0]["id"]
+        assert client.get("/media/by-id/not-a-track").status_code == 404
+        track_path.unlink()
+        assert client.get(f"/media/by-id/{track_id}").status_code == 404
+
+
+def test_scan_excludes_symlink_outside_music_root(tmp_path: Path) -> None:
+    music_root = tmp_path / "music"
+    music_root.mkdir()
+    outside_track = tmp_path / "outside.mp3"
+    outside_track.write_bytes(b"outside")
+    (music_root / "linked.mp3").symlink_to(outside_track)
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=music_root)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(music_root, public_base_url))
+    ) as client:
+        assert client.get("/api/tracks").json()["tracks"] == []

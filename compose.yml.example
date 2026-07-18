@@ -6,8 +6,9 @@ services:
     ports:
       - "8123:8123"
     environment:
-      MUSIC_DIR: /music
+      MUSIC_ROOT: /music
       CONFIG_DIR: /config
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL to an address reachable by the speaker}
       PORT: "8123"
     volumes:
       - ${MUSIC_HOST_DIR:-/mnt/pool1/personal/media/音乐}:/music:ro
