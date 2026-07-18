@@ -23,7 +23,7 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.get("/media/by-id/{track_id}", response_class=FileResponse)
+@router.api_route("/media/by-id/{track_id}", methods=["GET", "HEAD"], response_class=FileResponse)
 def media_by_id(track_id: str, request: Request) -> FileResponse:
     media_file = request.app.state.service.get_media_file(track_id)
     if media_file is None:

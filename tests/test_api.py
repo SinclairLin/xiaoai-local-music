@@ -32,6 +32,38 @@ def test_api_health_tracks_and_play(tmp_path) -> None:
         assert voice_response.json()["track"]["path"] == expected_url
 
 
+def test_tracks_query_does_not_match_media_url_parts(tmp_path: Path) -> None:
+    (tmp_path / "稻香.mp3").touch()
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(tmp_path, public_base_url))
+    ) as client:
+        for query in ("8123", "http", "media", "by-id", "speaker-host", "music"):
+            assert client.get("/api/tracks", params={"q": query}).json()["tracks"] == []
+        assert client.post("/api/voice", json={"text": "播放 8123"}).status_code == 404
+
+
+def test_media_supports_head_requests(tmp_path: Path) -> None:
+    payload = b"0123456789"
+    (tmp_path / "track.mp3").write_bytes(payload)
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(tmp_path, public_base_url))
+    ) as client:
+        track_id = client.get("/api/tracks").json()["tracks"][0]["id"]
+        response = client.head(f"/media/by-id/{track_id}")
+
+    assert response.status_code == 200
+    assert response.content == b""
+    assert response.headers["content-length"] == str(len(payload))
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.headers["accept-ranges"] == "bytes"
+
+
 @pytest.mark.parametrize(
     ("suffix", "media_type"),
     [
