@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .config import ConfigError, Settings
-from .mina_client import MinaClientError, MinaDeviceError, MinaHttpClient, MockMinaClient, MinaDevice
+from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient, MinaDevice
 from .models import ConfigUpdate, PlayRequest, VoiceRequest, VolumeRequest
 from .service import PlaybackStateError, TrackNotFoundError
 from .voice import parse_play_command
@@ -101,7 +101,6 @@ def get_config(request: Request) -> dict[str, object]:
         "public_base_url": settings.public_base_url,
         "xiaomi_user": settings.xiaomi_user,
         "xiaomi_password": "********" if settings.xiaomi_password else None,
-        "mina_api_base_url": settings.mina_api_base_url,
         "mina_mode": settings.mina_mode,
         "mina_device_id": settings.mina_device_id,
     }
@@ -119,7 +118,6 @@ def update_config(payload: ConfigUpdate, request: Request) -> dict[str, object]:
         "public_base_url": payload.public_base_url if payload.public_base_url is not None else old.public_base_url,
         "xiaomi_user": payload.xiaomi_user if payload.xiaomi_user is not None else old.xiaomi_user,
         "xiaomi_password": password,
-        "mina_api_base_url": payload.mina_api_base_url if payload.mina_api_base_url is not None else old.mina_api_base_url,
         "mina_mode": payload.mina_mode if payload.mina_mode is not None else old.mina_mode,
         "mina_device_id": payload.mina_device_id if payload.mina_device_id is not None else old.mina_device_id,
     }
@@ -135,7 +133,7 @@ def update_config(payload: ConfigUpdate, request: Request) -> dict[str, object]:
         client = (
             MockMinaClient(updated.mina_device_id)
             if updated.mina_mode == "mock"
-            else MinaHttpClient(updated.mina_api_base_url or "", updated.xiaomi_user, updated.xiaomi_password, updated.config_dir)
+            else MinaMiserviceClient(updated.xiaomi_user, updated.xiaomi_password, updated.config_dir)
         )
         request.app.state.service.mina_client = client
         request.app.state.mina_client = client

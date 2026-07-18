@@ -1,70 +1,153 @@
-import os
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
-from app.mina_client import MinaAuthError, MinaDevice, MinaHttpClient
+import pytest
 
-
-class Response:
-    def __init__(self, status_code: int, payload: object, cookies: dict[str, str] | None = None) -> None:
-        self.status_code = status_code
-        self._payload = payload
-        self.cookies = cookies or {}
-
-    def json(self) -> object:
-        return self._payload
-
-
-class Transport:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str, dict[str, object]]] = []
-        self.responses = [Response(200, {"token": "secret-token"}, {"sid": "cookie-value"})]
-
-    def request(self, method: str, url: str, **kwargs: object) -> Response:
-        self.calls.append((method, url, kwargs))
-        return self.responses.pop(0)
+from app.mina_client import (
+    MinaAuthError,
+    MinaDevice,
+    MinaMiserviceClient,
+    MinaUpstreamError,
+    _otp_unavailable,
+)
 
 
-def test_login_persists_token_and_cookies_with_restricted_permissions(tmp_path: Path) -> None:
-    transport = Transport()
-    client = MinaHttpClient("https://mina.example", "user", "password", tmp_path, transport=transport)
+class FakeMiNAService:
+    def __init__(self, devices: object = None, error: Exception | None = None) -> None:
+        self.devices = devices
+        self.error = error
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
-    assert client.login() == "secret-token"
-    assert (tmp_path / ".mi.token").read_text(encoding="utf-8").strip() == "secret-token"
-    assert (tmp_path / ".mina.cookies").read_text(encoding="utf-8").strip() == '{"sid": "cookie-value"}'
-    if os.name == "posix":
-        assert (tmp_path / ".mi.token").stat().st_mode & 0o777 == 0o600
-        assert (tmp_path / ".mina.cookies").stat().st_mode & 0o777 == 0o600
+    async def _record(self, name: str, *args: Any) -> Any:
+        self.calls.append((name, args))
+        if self.error is not None:
+            raise self.error
+        return True
+
+    async def device_list(self, master: int = 0) -> Any:
+        self.calls.append(("device_list", (master,)))
+        if self.error is not None:
+            raise self.error
+        return self.devices
+
+    async def text_to_speech(self, deviceId: str, text: str) -> Any:
+        return await self._record("text_to_speech", deviceId, text)
+
+    async def play_by_url(self, deviceId: str, url: str, _type: int = 2) -> Any:
+        return await self._record("play_by_url", deviceId, url)
+
+    async def player_pause(self, deviceId: str) -> Any:
+        return await self._record("player_pause", deviceId)
+
+    async def player_stop(self, deviceId: str) -> Any:
+        return await self._record("player_stop", deviceId)
+
+    async def player_play(self, deviceId: str) -> Any:
+        return await self._record("player_play", deviceId)
+
+    async def player_set_volume(self, deviceId: str, volume: int) -> Any:
+        return await self._record("player_set_volume", deviceId, volume)
 
 
-def test_existing_token_is_reused_without_login(tmp_path: Path) -> None:
-    (tmp_path / ".mi.token").write_text("cached-token\n", encoding="utf-8")
-    client = MinaHttpClient("https://mina.example", "user", "password", tmp_path, transport=Transport())
+def make_client(tmp_path: Path, service: FakeMiNAService, username: str | None = "user", password: str | None = "password") -> MinaMiserviceClient:
+    @asynccontextmanager
+    async def factory():
+        yield service
 
-    assert client.login() == "cached-token"
-
-
-def test_missing_endpoint_has_clear_auth_error(tmp_path: Path) -> None:
-    client = MinaHttpClient("", "user", "password", tmp_path, transport=Transport())
-
-    try:
-        client.login()
-    except MinaAuthError as exc:
-        assert "endpoint" in str(exc)
-    else:
-        raise AssertionError("expected MinaAuthError")
+    return MinaMiserviceClient(username, password, tmp_path, service_factory=factory)
 
 
-def test_device_and_playback_methods_use_minimal_rest_contract(tmp_path: Path) -> None:
-    transport = Transport()
-    transport.responses.extend(
-        [
-            Response(200, {"devices": [{"id": "d1", "name": "Kitchen"}]}),
-            Response(200, {"ok": True}),
+def test_device_list_mapping_prefers_alias_and_skips_invalid(tmp_path: Path) -> None:
+    service = FakeMiNAService(
+        devices=[
+            {"deviceID": "d1", "alias": "客厅音箱", "name": "Speaker"},
+            {"deviceID": "d2", "name": "卧室音箱"},
+            {"miotDID": 123},
+            {"alias": "no-id"},
+            "not-a-dict",
         ]
     )
-    client = MinaHttpClient("https://mina.example", "user", "password", tmp_path, transport=transport)
+    client = make_client(tmp_path, service)
 
-    assert client.list_devices() == [MinaDevice(id="d1", name="Kitchen")]
-    assert client.play_by_url("http://music/track.mp3", "d1") == {"ok": True}
-    assert transport.calls[1][1].endswith("/devices")
-    assert transport.calls[2][2]["json"] == {"device_id": "d1", "url": "http://music/track.mp3"}
+    assert client.list_devices() == [
+        MinaDevice(id="d1", name="客厅音箱"),
+        MinaDevice(id="d2", name="卧室音箱"),
+        MinaDevice(id="123", name="123"),
+    ]
+
+
+def test_device_list_none_becomes_empty(tmp_path: Path) -> None:
+    client = make_client(tmp_path, FakeMiNAService(devices=None))
+
+    assert client.list_devices() == []
+
+
+def test_playback_methods_flip_argument_order(tmp_path: Path) -> None:
+    service = FakeMiNAService()
+    client = make_client(tmp_path, service)
+
+    client.play_by_url("http://music/track.mp3", "d1")
+    client.text_to_speech("你好", "d1")
+    client.pause("d1")
+    client.stop("d1")
+    client.play("d1")
+    client.set_volume(30, "d1")
+
+    assert service.calls == [
+        ("play_by_url", ("d1", "http://music/track.mp3")),
+        ("text_to_speech", ("d1", "你好")),
+        ("player_pause", ("d1",)),
+        ("player_stop", ("d1",)),
+        ("player_play", ("d1",)),
+        ("player_set_volume", ("d1", 30)),
+    ]
+
+
+def test_otp_callback_raises_auth_error_with_host_login_hint() -> None:
+    with pytest.raises(MinaAuthError, match="python -m miservice"):
+        asyncio.run(_otp_unavailable("sms"))
+
+
+def test_generic_exception_is_wrapped_as_upstream_error(tmp_path: Path) -> None:
+    client = make_client(tmp_path, FakeMiNAService(error=RuntimeError("boom")))
+
+    with pytest.raises(MinaUpstreamError, match="boom"):
+        client.list_devices()
+
+
+def test_mina_client_error_passes_through_unwrapped(tmp_path: Path) -> None:
+    client = make_client(tmp_path, FakeMiNAService(error=MinaAuthError("需要 OTP")))
+
+    with pytest.raises(MinaAuthError, match="需要 OTP"):
+        client.list_devices()
+
+
+def test_update_credentials_removes_token_file_on_change(tmp_path: Path) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text("{}", encoding="utf-8")
+    client = make_client(tmp_path, FakeMiNAService())
+
+    client.update_credentials("user", "password")
+    assert token_path.exists()
+
+    client.update_credentials("user", "new-password")
+    assert not token_path.exists()
+    assert client.username == "user"
+    assert client.password == "new-password"
+
+
+def test_login_without_credentials_raises_auth_error(tmp_path: Path) -> None:
+    client = make_client(tmp_path, FakeMiNAService(devices=[]), username=None, password=None)
+
+    with pytest.raises(MinaAuthError, match="username and password"):
+        client.login()
+
+
+def test_login_probes_devices_and_returns_authenticated(tmp_path: Path) -> None:
+    service = FakeMiNAService(devices=[{"deviceID": "d1", "name": "Speaker"}])
+    client = make_client(tmp_path, service)
+
+    assert client.login() == "authenticated"
+    assert service.calls == [("device_list", (0,))]

@@ -1,15 +1,14 @@
-"""Small, injectable Mina client with safe local credential persistence."""
+"""Injectable Mina clients backed by the miservice library or a local mock."""
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
+import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, AsyncContextManager, Awaitable, Callable, Protocol
 
-import httpx
+from miservice import MiAccount, MiNAService, MiTokenStore
 
 
 class MinaClientError(RuntimeError):
@@ -34,10 +33,6 @@ class MinaDevice:
     name: str
 
 
-class MinaTransport(Protocol):
-    def request(self, method: str, url: str, **kwargs: Any) -> Any: ...
-
-
 class MinaClient(Protocol):
     def login(self) -> str: ...
     def list_devices(self) -> list[MinaDevice]: ...
@@ -49,148 +44,109 @@ class MinaClient(Protocol):
     def set_volume(self, volume: int, device_id: str) -> Any: ...
 
 
-def _atomic_secret_write(path: Path, value: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
-            temporary = Path(handle.name)
-            handle.write(value)
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
-    except OSError as exc:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-        raise MinaClientError(f"cannot persist Mina secret {path.name}: {exc}") from exc
+async def _otp_unavailable(otp_method: str) -> str:
+    raise MinaAuthError(
+        "小米账号需 OTP 验证，服务进程内无法交互；"
+        "请在宿主机设置 MI_USER/MI_PASS 后执行 `python -m miservice mina` 完成登录，"
+        "再将 ~/.mi.token 复制到 config_dir"
+    )
 
 
-class MinaHttpClient:
-    def __init__(self, base_url: str, username: str | None, password: str | None, config_dir: str | Path, transport: MinaTransport | None = None) -> None:
-        self.base_url = base_url.rstrip("/")
+class MinaMiserviceClient:
+    """Synchronous Mina client bridging to the async miservice library.
+
+    Each call runs a single coroutine via ``asyncio.run``, so this client must
+    be used from a synchronous context without a running event loop (FastAPI
+    sync endpoints executed in thread-pool workers qualify). If endpoints ever
+    become ``async def``, the bridging strategy must change.
+    """
+
+    def __init__(
+        self,
+        username: str | None,
+        password: str | None,
+        config_dir: str | Path,
+        service_factory: Callable[[], AsyncContextManager[MiNAService]] | None = None,
+    ) -> None:
         self.username = username
         self.password = password
         self.config_dir = Path(config_dir)
         self.token_path = self.config_dir / ".mi.token"
-        self.cookies_path = self.config_dir / ".mina.cookies"
-        self.transport = transport or httpx.Client(timeout=15.0)
-        self.token: str | None = self._read_token()
-        self.cookies: dict[str, str] = self._read_cookies()
+        self._service_factory = service_factory or self._default_service
 
-    def _read_token(self) -> str | None:
+    @asynccontextmanager
+    async def _default_service(self):
         try:
-            value = self.token_path.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            return None
-        except OSError as exc:
-            raise MinaClientError(f"cannot read Mina token: {exc}") from exc
-        return value or None
+            from aiohttp import ClientSession
+        except ImportError:
+            from miservice.biohttp import ClientSession
+        async with ClientSession() as session:
+            account = MiAccount(
+                session,
+                self.username,
+                self.password,
+                token_store=MiTokenStore(str(self.token_path)),
+                otp_callback=_otp_unavailable,
+            )
+            yield MiNAService(account)
 
-    def _read_cookies(self) -> dict[str, str]:
+    def _run(self, op: Callable[[MiNAService], Awaitable[Any]]) -> Any:
+        async def runner() -> Any:
+            async with self._service_factory() as service:
+                return await op(service)
+
         try:
-            value = json.loads(self.cookies_path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return {}
-        except (OSError, json.JSONDecodeError) as exc:
-            raise MinaClientError(f"cannot read Mina cookies: {exc}") from exc
-        if not isinstance(value, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
-            raise MinaClientError("Mina cookies file must contain a JSON object")
-        return value
-
-    def _persist_cookies(self) -> None:
-        _atomic_secret_write(self.cookies_path, json.dumps(self.cookies, ensure_ascii=False, sort_keys=True) + "\n")
+            return asyncio.run(runner())
+        except MinaClientError:
+            raise
+        except Exception as exc:
+            raise MinaUpstreamError(f"Mina request failed: {exc}") from exc
 
     def login(self) -> str:
-        if self.token:
-            return self.token
-        if not self.base_url:
-            raise MinaAuthError("Mina API endpoint is not configured")
         if not self.username or not self.password:
             raise MinaAuthError("Mina username and password are required")
-        try:
-            response = self.transport.request("POST", f"{self.base_url}/login", json={"username": self.username, "password": self.password, "cookies": self.cookies})
-        except Exception as exc:
-            raise MinaUpstreamError(f"Mina login request failed: {exc}") from exc
-        if getattr(response, "status_code", 0) >= 400:
-            raise MinaAuthError(f"Mina login failed with HTTP {response.status_code}")
-        try:
-            payload = response.json()
-        except Exception as exc:
-            raise MinaUpstreamError("Mina login returned invalid JSON") from exc
-        token = payload.get("token") if isinstance(payload, dict) else None
-        if not isinstance(token, str) or not token:
-            raise MinaAuthError("Mina login response did not contain a token")
-        self.token = token
-        _atomic_secret_write(self.token_path, token + "\n")
-        response_cookies = getattr(response, "cookies", None)
-        if response_cookies is not None:
-            try:
-                self.cookies.update({str(key): str(value) for key, value in response_cookies.items()})
-            except Exception:
-                pass
-            if self.cookies:
-                self._persist_cookies()
-        return token
+        self.list_devices()
+        return "authenticated"
 
     def update_credentials(self, username: str | None, password: str | None) -> None:
         if username != self.username or password != self.password:
-            self.token = None
             self.token_path.unlink(missing_ok=True)
         self.username = username
         self.password = password
 
-    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
-        token = self.login()
-        try:
-            response = self.transport.request(method, f"{self.base_url}{path}", json=payload, headers={"Authorization": f"Bearer {token}"}, cookies=self.cookies)
-        except Exception as exc:
-            raise MinaUpstreamError(f"Mina request failed: {exc}") from exc
-        if getattr(response, "status_code", 0) in {401, 403}:
-            self.token = None
-            self.token_path.unlink(missing_ok=True)
-            token = self.login()
-            try:
-                response = self.transport.request(method, f"{self.base_url}{path}", json=payload, headers={"Authorization": f"Bearer {token}"}, cookies=self.cookies)
-            except Exception as exc:
-                raise MinaUpstreamError(f"Mina retry failed: {exc}") from exc
-        if getattr(response, "status_code", 0) >= 400:
-            raise MinaUpstreamError(f"Mina request {path} failed with HTTP {response.status_code}")
-        try:
-            return response.json()
-        except Exception:
-            return {"ok": True}
-
     def list_devices(self) -> list[MinaDevice]:
-        payload = self._request("GET", "/devices")
-        devices = payload.get("devices") if isinstance(payload, dict) else payload
-        if not isinstance(devices, list):
-            raise MinaUpstreamError("Mina devices response was invalid")
+        devices = self._run(lambda service: service.device_list())
+        if devices is None:
+            return []
         result: list[MinaDevice] = []
         for device in devices:
             if not isinstance(device, dict):
                 continue
-            device_id = device.get("id", device.get("device_id"))
-            name = device.get("name", device_id)
-            if isinstance(device_id, str) and isinstance(name, str):
-                result.append(MinaDevice(id=device_id, name=name))
+            raw_id = device.get("deviceID") or device.get("miotDID")
+            if raw_id is None:
+                continue
+            device_id = str(raw_id)
+            name = device.get("alias") or device.get("name") or device_id
+            result.append(MinaDevice(id=device_id, name=str(name)))
         return result
 
     def text_to_speech(self, text: str, device_id: str) -> Any:
-        return self._request("POST", "/tts", {"device_id": device_id, "text": text})
+        return self._run(lambda service: service.text_to_speech(device_id, text))
 
     def play_by_url(self, url: str, device_id: str) -> Any:
-        return self._request("POST", "/play_by_url", {"device_id": device_id, "url": url})
+        return self._run(lambda service: service.play_by_url(device_id, url))
 
     def pause(self, device_id: str) -> Any:
-        return self._request("POST", "/pause", {"device_id": device_id})
+        return self._run(lambda service: service.player_pause(device_id))
 
     def stop(self, device_id: str) -> Any:
-        return self._request("POST", "/stop", {"device_id": device_id})
+        return self._run(lambda service: service.player_stop(device_id))
 
     def play(self, device_id: str) -> Any:
-        return self._request("POST", "/play", {"device_id": device_id})
+        return self._run(lambda service: service.player_play(device_id))
 
     def set_volume(self, volume: int, device_id: str) -> Any:
-        return self._request("POST", "/volume", {"device_id": device_id, "volume": volume})
+        return self._run(lambda service: service.player_set_volume(device_id, volume))
 
 
 class MockMinaClient:

@@ -1,8 +1,8 @@
 # Copy this file to config.yaml and replace the values as needed.
 xiaomi_user: "your-xiaomi-user"
 xiaomi_password: "your-xiaomi-password"
+# mina_mode: "mock" 或 "miservice"（直连小米云）
 mina_mode: "mock"
-mina_api_base_url: ""
 mina_device_id: "mock-device"
 public_base_url: "http://nas-host:8123"
 music_root: "/music"

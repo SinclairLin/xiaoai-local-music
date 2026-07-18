@@ -7,7 +7,7 @@
 ## 模块
 
 - `config.py`：读取 `/config/config.yaml` 并应用环境变量覆盖，校验音箱可访问的 `public_base_url`，支持凭据配置和 `Settings.save()` 原子写回。
-- `mina_client.py`：提供可注入的 Mina HTTP/mock client，安全持久化 token 和 cookies，并封装设备、TTS 与播放控制。
+- `mina_client.py`：提供可注入的 Mina client（miservice 直连或 mock），同步接口经 `asyncio.run` 桥接 miservice 的 async API，封装设备、TTS 与播放控制；token 由 miservice 的 `MiTokenStore` 以 600 权限落盘复用。
 - `service.py`：启动时扫描 `mp3/flac/m4a/wav`，生成稳定曲目 ID，缓存安全文件路径与 MIME 类型，维护内存播放队列并委托 Mina 播放。
 - `voice.py`：识别所有以“播放”开头的文本，可去掉可选“本地”前缀。
 - `routes.py`：健康检查、配置读写（密码脱敏）、设备发现、曲目查询、支持 HTTP Range 的媒体文件、播放和队列控制接口。
@@ -17,4 +17,4 @@
 
 ## 风险与后续
 
-服务仍没有用户认证和数据库。Mina HTTP endpoint 采用可替换最小 REST 契约；真实部署应在可信内网使用，并按实际 Mina 服务调整 transport。若开放到公网，需要增加认证和请求限流。
+服务仍没有用户认证和数据库。Mina 控制通过 miservice 直连小米云：同步端点在无事件循环的线程池中以 `asyncio.run` 逐次桥接（端点若改为 async 需更换桥接方案）；小米风控触发 OTP 时服务无法交互，需在宿主机 `python -m miservice` 预登录并把 `.mi.token` 放入 config 目录。真实部署应在可信内网使用；若开放到公网，需要增加认证和请求限流。

@@ -1,6 +1,6 @@
 # xiaoai-local-music
 
-NAS Docker 上的小爱本地音乐桥接服务。它扫描只读挂载的本地曲库，提供简单网页和 HTTP API，并通过 Mina mock 或可配置 HTTP 适配层控制播放。
+NAS Docker 上的小爱本地音乐桥接服务。它扫描只读挂载的本地曲库，提供简单网页和 HTTP API，并通过 [miservice](https://github.com/Yonsm/MiService) 直连小米云（或 mock 模式）控制音箱播放。
 
 ## 本地运行
 
@@ -29,20 +29,45 @@ docker compose up -d
 
 曲库以 `/music:ro` 挂载，配置目录为 `/config`。应用读取 `/config/config.yaml`，可先复制
 `config/config.yaml.example` 为 `config/config.yaml`。配置文件使用扁平键：
-`xiaomi_user`、`xiaomi_password`、`mina_mode`、`mina_api_base_url`、`mina_device_id`、`public_base_url`、`music_root`、`host` 和 `port`。
+`xiaomi_user`、`xiaomi_password`、`mina_mode`、`mina_device_id`、`public_base_url`、`music_root`、`host` 和 `port`。
 
-Mina 登录 token 保存在 `/config/.mi.token`，cookies 保存在 `/config/.mina.cookies`，两者权限均为 600，服务不会把它们放进镜像或 Git。没有真实账号时设置 `mina_mode: mock`；HTTP 模式需要提供 Mina endpoint、账号、密码和设备 ID。
+小米登录 token 保存在 `/config/.mi.token`，权限为 600，服务不会把它放进镜像或 Git。没有真实账号时设置 `mina_mode: mock`；`miservice` 模式需要提供小米账号、密码和设备 ID。
 
 环境变量优先于 YAML 配置，空字符串不会覆盖文件值：
 
-- `XIAOMI_USER`、`XIAOMI_PASSWORD`、`MINA_MODE`、`MINA_API_BASE_URL`、`MINA_DEVICE_ID`、`PUBLIC_BASE_URL`、`MUSIC_ROOT`
+- `XIAOMI_USER`、`XIAOMI_PASSWORD`、`MINA_MODE`、`MINA_DEVICE_ID`、`PUBLIC_BASE_URL`、`MUSIC_ROOT`
 - 兼容变量 `MUSIC_DIR`（仅在未设置 `MUSIC_ROOT` 时使用）
 - 运行参数 `CONFIG_DIR`、`HOST`、`PORT`
 
 配置模块提供 `Settings.save()` 显式写回配置文件；服务启动不会自动回写。保存使用同目录临时文件原子替换，配置文件包含凭据时应限制为仅服务用户可读。
-也可以直接设置 `PUBLIC_BASE_URL`、`MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT`、`XIAOMI_USER`、`XIAOMI_PASSWORD`、`MINA_MODE`、`MINA_API_BASE_URL` 和 `MINA_DEVICE_ID` 环境变量。
+也可以直接设置 `PUBLIC_BASE_URL`、`MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT`、`XIAOMI_USER`、`XIAOMI_PASSWORD`、`MINA_MODE` 和 `MINA_DEVICE_ID` 环境变量。
 
 曲库索引保存在内存中，不落盘；曲目新增、删除或修改后需要重启服务才会生效。当前版本不解析音频标签，曲目标题取自文件名；配置目录仅在调用 `Settings.save()` 写回配置时需要写权限。
+
+## 为何选 miservice 而非 miservice-fork
+
+| 维度 | miservice (Yonsm/MiService) | miservice-fork (yihong0618/MiService) |
+|---|---|---|
+| PyPI 最新版 | 3.0.1，2026-07-03 发布 | 2.9.3，2025-10-31 发布 |
+| GitHub | 817 stars，2026-07 活跃 | 441 stars，2026-05 的登录修复未发版到 PyPI |
+| 依赖 | 零硬依赖（aiohttp 可选，内置 biohttp 回退） | setuptools/aiohttp/mutagen/rich/fake-useragent |
+| 登录 | 支持 SMS/Email OTP 两步验证（3.0 新增，应对小米风控） | 无 OTP，异常登录需手工跑仓库脚本 |
+| 协议 | MIT | MIT |
+
+两者 API 同源，`MiNAService` 接口一致；原版发版更勤、依赖更干净且内置 OTP 支持，故选原版。可选安装 `aiohttp` 提升网络性能，未安装时 miservice 自动回退到内置 biohttp。
+
+## 登录与 OTP
+
+服务进程内无法完成交互式 OTP 验证。若小米风控要求两步验证，服务会返回 502 并附带提示。此时请在宿主机预登录：
+
+```bash
+pip install miservice
+export MI_USER=<小米账号>
+export MI_PASS=<密码>
+python -m miservice mina   # 触发登录（必要时交互输入 OTP），并列出音箱设备
+```
+
+登录成功后 token 写入 `~/.mi.token`，将其复制到服务的 config 目录（容器内 `/config`），重启后服务复用该 token，不再触发交互登录。上述 `mina` 命令还会列出账号下的小爱音箱，可从中取 `mina_device_id`。在网页或 API 中修改小米账号或密码会删除旧 token，下次调用时重新登录。
 
 ## API
 

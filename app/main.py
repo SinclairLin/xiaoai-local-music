@@ -8,7 +8,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from .config import Settings
-from .mina_client import MinaHttpClient, MockMinaClient
+from .mina_client import MinaMiserviceClient, MockMinaClient
 from .routes import router
 from .service import MusicService
 
@@ -22,8 +22,7 @@ def create_app(settings: Settings | None = None, service: MusicService | None = 
         if settings.mina_mode == "mock":
             mina_client = MockMinaClient(settings.mina_device_id)
         else:
-            mina_client = MinaHttpClient(
-                settings.mina_api_base_url or "",
+            mina_client = MinaMiserviceClient(
                 settings.xiaomi_user,
                 settings.xiaomi_password,
                 settings.config_dir,

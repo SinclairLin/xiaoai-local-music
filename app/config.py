@@ -56,8 +56,8 @@ def _optional_string_value(data: dict[str, Any], key: str) -> str | None:
 
 
 def _mina_mode_value(value: Any, source: str) -> str:
-    if value not in {"mock", "http"}:
-        raise ConfigError(f"{source} must be either 'mock' or 'http'")
+    if value not in {"mock", "miservice"}:
+        raise ConfigError(f"{source} must be either 'mock' or 'miservice'")
     return value
 
 
@@ -105,7 +105,6 @@ class Settings:
     music_dir: str | Path | None = field(default=None, repr=False, compare=False)
     xiaomi_user: str | None = field(default=None, repr=False)
     xiaomi_password: str | None = field(default=None, repr=False)
-    mina_api_base_url: str | None = None
     mina_mode: str = "mock"
     mina_device_id: str | None = None
     public_base_url: str = ""
@@ -138,10 +137,10 @@ class Settings:
             value = getattr(self, key)
             if value is not None and not isinstance(value, str):
                 raise ConfigError(f"settings field {key!r} must be a string or null")
-        for key in ("mina_api_base_url", "mina_device_id"):
-            value = getattr(self, key)
-            if value is not None and (not isinstance(value, str) or not value.strip()):
-                raise ConfigError(f"settings field {key!r} must be a non-empty string or null")
+        if self.mina_device_id is not None and (
+            not isinstance(self.mina_device_id, str) or not self.mina_device_id.strip()
+        ):
+            raise ConfigError("settings field 'mina_device_id' must be a non-empty string or null")
         object.__setattr__(self, "mina_mode", _mina_mode_value(self.mina_mode, "settings field 'mina_mode'"))
         object.__setattr__(self, "port", _port_value(self.port, "settings field 'port'"))
         object.__setattr__(
@@ -164,7 +163,6 @@ class Settings:
         host = _string_value(data, "host", cls.host)
         xiaomi_user = _optional_string_value(data, "xiaomi_user")
         xiaomi_password = _optional_string_value(data, "xiaomi_password")
-        mina_api_base_url = _optional_string_value(data, "mina_api_base_url")
         mina_mode = data.get("mina_mode", cls.mina_mode)
         mina_device_id = _optional_string_value(data, "mina_device_id")
         public_base_url = data.get("public_base_url")
@@ -173,7 +171,6 @@ class Settings:
         host = _non_empty_env("HOST") or host
         xiaomi_user = _non_empty_env("XIAOMI_USER") or xiaomi_user
         xiaomi_password = _non_empty_env("XIAOMI_PASSWORD") or xiaomi_password
-        mina_api_base_url = _non_empty_env("MINA_API_BASE_URL") or mina_api_base_url
         mina_mode = _non_empty_env("MINA_MODE") or mina_mode
         mina_device_id = _non_empty_env("MINA_DEVICE_ID") or mina_device_id
         public_base_url = _non_empty_env("PUBLIC_BASE_URL") or public_base_url
@@ -195,7 +192,6 @@ class Settings:
             port=port,
             xiaomi_user=xiaomi_user,
             xiaomi_password=xiaomi_password,
-            mina_api_base_url=mina_api_base_url,
             mina_mode=_mina_mode_value(mina_mode, "mina_mode"),
             mina_device_id=mina_device_id,
             public_base_url=_public_base_url_value(public_base_url, "public_base_url"),
@@ -207,7 +203,6 @@ class Settings:
         payload = {
             "xiaomi_user": self.xiaomi_user,
             "xiaomi_password": self.xiaomi_password,
-            "mina_api_base_url": self.mina_api_base_url,
             "mina_mode": self.mina_mode,
             "mina_device_id": self.mina_device_id,
             "public_base_url": self.public_base_url,
