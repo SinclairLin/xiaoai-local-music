@@ -8,3 +8,4 @@ venv/
 config/*
 !config/.gitkeep
 
+.codex/config.toml
