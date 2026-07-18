@@ -66,10 +66,14 @@ def _public_base_url_value(value: Any, source: str) -> str:
         raise ConfigError(f"{source} must be a non-empty absolute HTTP(S) URL")
 
     normalized = value.strip().rstrip("/")
+    if any(ord(char) <= 0x20 or ord(char) == 0x7F for char in normalized):
+        raise ConfigError(f"{source} must not contain whitespace or control characters")
+    if "?" in normalized or "#" in normalized:
+        raise ConfigError(f"{source} must not include a query string or fragment")
     try:
         parsed = urlsplit(normalized)
         hostname = parsed.hostname
-        parsed.port
+        port = parsed.port
     except ValueError as exc:
         raise ConfigError(f"{source} must be a valid absolute HTTP(S) URL") from exc
 
@@ -81,9 +85,9 @@ def _public_base_url_value(value: Any, source: str) -> str:
         or parsed.password is not None
     ):
         raise ConfigError(f"{source} must be a valid absolute HTTP(S) URL")
-    if parsed.query or parsed.fragment:
-        raise ConfigError(f"{source} must not include a query string or fragment")
-    return normalized
+    if port == 0:
+        raise ConfigError(f"{source} port must be between 1 and 65535")
+    return parsed.scheme + normalized[len(parsed.scheme):]
 
 
 @dataclass(frozen=True)
@@ -93,8 +97,8 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8123
     music_dir: str | Path | None = field(default=None, repr=False, compare=False)
-    xiaomi_user: str | None = None
-    xiaomi_password: str | None = None
+    xiaomi_user: str | None = field(default=None, repr=False)
+    xiaomi_password: str | None = field(default=None, repr=False)
     public_base_url: str = ""
 
     def __post_init__(self) -> None:
@@ -141,7 +145,6 @@ class Settings:
         xiaomi_user = _optional_string_value(data, "xiaomi_user")
         xiaomi_password = _optional_string_value(data, "xiaomi_password")
         public_base_url = data.get("public_base_url")
-        port = _port_value(data.get("port", cls.port), "config key 'port'")
 
         music_root = _non_empty_env("MUSIC_ROOT") or _non_empty_env("MUSIC_DIR") or music_root
         host = _non_empty_env("HOST") or host
@@ -152,9 +155,12 @@ class Settings:
         env_port = _non_empty_env("PORT")
         if env_port is not None:
             try:
-                port = _port_value(int(env_port), "environment variable PORT")
+                port = int(env_port)
             except ValueError as exc:
                 raise ConfigError("environment variable PORT must be an integer") from exc
+            port = _port_value(port, "environment variable PORT")
+        else:
+            port = _port_value(data.get("port", cls.port), "config key 'port'")
 
         return cls(
             music_root=music_root,

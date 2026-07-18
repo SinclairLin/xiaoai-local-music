@@ -1,3 +1,5 @@
+import os
+
 import pytest
 import yaml
 
@@ -113,7 +115,8 @@ def test_save_round_trip_creates_directory(monkeypatch, tmp_path) -> None:
     target = settings.save()
 
     assert target == target_dir / "config.yaml"
-    assert target.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert target.stat().st_mode & 0o777 == 0o600
     clear_config_env(monkeypatch)
     monkeypatch.setenv("CONFIG_DIR", str(target_dir))
     assert Settings.from_env() == settings
@@ -163,6 +166,26 @@ def test_invalid_port_environment_fails(monkeypatch, tmp_path) -> None:
 
     with pytest.raises(ConfigError, match="PORT"):
         Settings.from_env()
+
+
+def test_out_of_range_port_environment_reports_range(monkeypatch, tmp_path) -> None:
+    clear_config_env(monkeypatch)
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("PORT", "70000")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
+
+    with pytest.raises(ConfigError, match="between 1 and 65535"):
+        Settings.from_env()
+
+
+def test_valid_port_environment_overrides_invalid_yaml_port(monkeypatch, tmp_path) -> None:
+    clear_config_env(monkeypatch)
+    (tmp_path / "config.yaml").write_text("port: 70000\n", encoding="utf-8")
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("PORT", "9001")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
+
+    assert Settings.from_env().port == 9001
 
 
 def test_create_app_uses_music_root(monkeypatch, tmp_path) -> None:
