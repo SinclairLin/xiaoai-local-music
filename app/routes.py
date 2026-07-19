@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 
 from .config import ConfigError, Settings
 from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient
@@ -16,12 +17,12 @@ from .voice import VoiceIntent, parse_command
 
 router = APIRouter()
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-@router.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return """<!doctype html>
-<html lang="zh-CN"><meta charset="utf-8"><title>小爱本地音乐</title>
-<body><h1>小爱本地音乐</h1><p>服务已启动。使用 <code>/api/tracks</code> 查看曲目。</p></body></html>"""
+
+@router.get("/", response_class=FileResponse)
+def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
 
 
 @router.get("/healthz")

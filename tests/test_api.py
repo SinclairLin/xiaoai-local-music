@@ -39,6 +39,19 @@ def test_api_health_tracks_and_play(tmp_path) -> None:
         assert voice_response.json()["track"]["path"] == expected_url
 
 
+def test_index_serves_admin_page(tmp_path: Path) -> None:
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(tmp_path, public_base_url))
+    ) as client:
+        response = client.get("/")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert "小爱本地音乐 · 管理台" in response.text
+
+
 def test_voice_status_enable_and_logs(tmp_path: Path) -> None:
     (tmp_path / "稻香.mp3").touch()
     config_dir = tmp_path / "config"
