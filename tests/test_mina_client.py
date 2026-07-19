@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from miservice import MiTokenStore
 
 from app.mina_client import (
     MinaAuthError,
@@ -231,10 +232,10 @@ class FakeConversationSession:
 
 
 class FakeAccount:
-    def __init__(self, session: FakeConversationSession, token: dict[str, Any]) -> None:
+    def __init__(self, session: FakeConversationSession, token: dict[str, Any] | None, token_store: Any = None) -> None:
         self._session = session
         self.token = token
-        self.token_store = None
+        self.token_store = token_store
         self.logins: list[str] = []
 
     async def login(self, sid: str) -> bool:
@@ -273,6 +274,64 @@ def test_voice_events_prefer_conversation_and_filter_watermark(tmp_path: Path) -
     url, kwargs = service.account._session.requests[0]
     assert "hardware=LX06" in url
     assert kwargs["cookies"]["deviceId"] == "d1"
+
+
+def test_voice_events_loads_persisted_token_before_login(tmp_path: Path) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({"userId": "u1", "micoapi": ["ssecurity", "persisted-token"]}),
+        encoding="utf-8",
+    )
+    session = FakeConversationSession([
+        FakeConversationResponse(200, _conversation_body([
+            {"time": 5, "query": "播放稻香", "requestId": "c1"},
+        ])),
+    ])
+    service = FakeMiNAService(devices=[])
+    service.account = FakeAccount(session, None, MiTokenStore(str(token_path)))
+    client = make_client(tmp_path, service)
+
+    events = client.fetch_voice_events("d1", "LX06", 0)
+
+    assert [event["query"] for event in events] == ["播放稻香"]
+    assert service.account.logins == []
+    assert session.requests[0][1]["cookies"]["serviceToken"] == "persisted-token"
+
+
+def test_voice_events_without_persisted_token_still_login(tmp_path: Path) -> None:
+    session = FakeConversationSession([
+        FakeConversationResponse(200, _conversation_body([
+            {"time": 5, "query": "播放稻香", "requestId": "c1"},
+        ])),
+    ])
+    service = FakeMiNAService(devices=[])
+    service.account = FakeAccount(session, None)
+    client = make_client(tmp_path, service)
+
+    client.fetch_voice_events("d1", "LX06", 0)
+
+    assert service.account.logins == ["micoapi"]
+
+
+def test_voice_events_persisted_token_missing_micoapi_triggers_login(tmp_path: Path) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({"userId": "u1", "passToken": "pass-token"}),
+        encoding="utf-8",
+    )
+    session = FakeConversationSession([
+        FakeConversationResponse(200, _conversation_body([
+            {"time": 5, "query": "播放稻香", "requestId": "c1"},
+        ])),
+    ])
+    service = FakeMiNAService(devices=[])
+    service.account = FakeAccount(session, None, MiTokenStore(str(token_path)))
+    client = make_client(tmp_path, service)
+
+    events = client.fetch_voice_events("d1", "LX06", 0)
+
+    assert [event["query"] for event in events] == ["播放稻香"]
+    assert service.account.logins == ["micoapi"]
 
 
 def test_voice_events_refresh_micoapi_token_once_on_auth_error(tmp_path: Path) -> None:
