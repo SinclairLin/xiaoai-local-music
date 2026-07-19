@@ -9,6 +9,8 @@ services:
       MUSIC_ROOT: /music
       CONFIG_DIR: /config
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL to an address reachable by the speaker}
+      MINA_MODE: ${MINA_MODE:-mock}
+      MINA_DEVICE_ID: ${MINA_DEVICE_ID:-}
       PORT: "8123"
     volumes:
       - ${MUSIC_HOST_DIR:-/mnt/pool1/personal/media/音乐}:/music:ro
