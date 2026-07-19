@@ -2,12 +2,12 @@
 
 ## 目标
 
-服务把 NAS 上的本地曲库整理成一个小型 HTTP/ASGI 服务，为后续小爱语音桥接提供稳定入口。当前版本实现目录扫描、HTTP 音频输出和 Mock 播放确认。
+服务把 NAS 上的本地曲库整理成一个小型 HTTP/ASGI 服务，为后续小爱语音桥接提供稳定入口。当前版本实现目录扫描、HTTP 音频输出和 MiNA 播放控制。
 
 ## 模块
 
 - `config.py`：读取 `/config/config.yaml` 并应用环境变量覆盖，校验音箱可访问的 `public_base_url`，支持凭据配置和 `Settings.save()` 原子写回。
-- `mina_client.py`：提供可注入的 Mina client（miservice 直连或 mock），同步接口经 `asyncio.run` 桥接 miservice 的 async API，封装设备、TTS 与播放控制；token 由 miservice 的 `MiTokenStore` 以 600 权限落盘复用。
+- `mina_client.py`：提供基于 miservice 的 Mina client；同步接口经 `asyncio.run` 桥接 miservice 的 async API，封装设备、TTS 与播放控制。`MockMinaClient` 仅作为测试注入替身，不属于生产配置；token 由 miservice 的 `MiTokenStore` 以 600 权限落盘复用。
 - `service.py`：启动时扫描 `mp3/flac/m4a/wav`，生成稳定曲目 ID，缓存安全文件路径与 MIME 类型，维护内存播放队列并委托 Mina 播放。
 - `voice.py`：解析中文播放和播放控制意图，可去掉唤醒词/礼貌前缀及可选“本地”前缀。
 - `voice_worker.py`：lifespan 管理的 asyncio 轮询 worker；优先 conversation 历史 API，失败时回退 MiNA ubus NLP，并将事件送入本地播放器。

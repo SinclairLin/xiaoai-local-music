@@ -9,7 +9,7 @@ from fastapi import FastAPI
 
 from .config import Settings
 from .login_session import LoginSessionManager
-from .mina_client import MinaMiserviceClient, MockMinaClient
+from .mina_client import MinaMiserviceClient
 from .routes import router
 from .service import MusicService
 from .voice_worker import MinaVoiceSource, VoiceSource, VoiceWorker
@@ -21,14 +21,11 @@ def create_app(settings: Settings | None = None, service: MusicService | None = 
         configured_service = service
         mina_client = service.mina_client
     else:
-        if settings.mina_mode == "mock":
-            mina_client = MockMinaClient(settings.mina_device_id)
-        else:
-            mina_client = MinaMiserviceClient(
-                settings.xiaomi_user,
-                settings.xiaomi_password,
-                settings.config_dir,
-            )
+        mina_client = MinaMiserviceClient(
+            settings.xiaomi_user,
+            settings.xiaomi_password,
+            settings.config_dir,
+        )
         configured_service = MusicService(
             settings.music_root,
             settings.public_base_url,

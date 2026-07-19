@@ -378,7 +378,7 @@ details.adv[open] > summary { margin-bottom: var(--space-2); }
         <div class="titles"><span class="eyebrow">Devices</span><h2>音箱设备</h2></div>
         <button class="btn btn-sm" id="btnDevRefresh" data-od-id="device-refresh-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 3.5V8h-4.5"/></svg>刷新列表</button>
       </div>
-      <p class="hint" style="margin-bottom:10px;">miservice 模式下「刷新列表」会用已保存的凭据真实登录小米云。点击设备即选中并写入配置。</p>
+      <p class="hint" style="margin-bottom:10px;">「刷新列表」会用已保存的凭据获取小米云中的真实设备。点击设备即选中并写入配置。</p>
       <div class="list" id="deviceList" data-od-id="device-list"></div>
       <div class="empty" id="deviceEmpty">尚未获取设备 — 保存小米账号后点击「刷新列表」</div>
       <div class="note" id="devNote" role="status"></div>
@@ -417,13 +417,6 @@ details.adv[open] > summary { margin-bottom: var(--space-2); }
       <div class="card-head">
         <div class="titles"><span class="eyebrow">Account</span><h2>小米账号</h2></div>
         <span class="state-chip" id="credChip">未配置</span>
-      </div>
-      <div class="field">
-        <label for="modeSeg">客户端模式</label>
-        <div class="seg" id="modeSeg" role="radiogroup" aria-label="客户端模式">
-          <label><input type="radio" name="minaMode" value="miservice" id="modeMi">miservice（真实音箱）</label>
-          <label><input type="radio" name="minaMode" value="mock" id="modeMock">mock（本地调试）</label>
-        </div>
       </div>
       <div class="field">
         <label for="accUser">小米账号</label>
@@ -624,7 +617,6 @@ function renderConfig() {
   $("accUser").value = c.xiaomi_user || "";
   $("accPass").value = "";
   $("accPass").placeholder = c.xiaomi_password ? "已设置（留空保持不变）" : "未设置";
-  ($("modeMi").checked = c.mina_mode === "miservice") || ($("modeMock").checked = true);
   const chip = $("credChip");
   chip.textContent = c.xiaomi_user && c.xiaomi_password ? "凭据已配置" : "未配置凭据";
   chip.className = "state-chip" + (c.xiaomi_user && c.xiaomi_password ? " playing" : "");
@@ -701,22 +693,14 @@ async function saveAndLogin() {
   const btn = $("btnLogin");
   btn.disabled = true; btn.textContent = "登录中…";
   $("otpRow").style.display = "none";
-  const mock = $("modeMock").checked;
-  const payload = { mina_mode: mock ? "mock" : "miservice" };
   const user = $("accUser").value.trim();
   const pass = $("accPass").value;
+  const payload = {};
   if (user) payload.xiaomi_user = user;
   if (pass && pass !== MASK) payload.xiaomi_password = pass;
   try {
     state.cfg = await api("api/config", { method: "PUT", body: payload });
     renderConfig();
-    if (mock) {
-      const res = await api("api/devices");
-      applyDevices(res);
-      note("accNote", "mock 模式无需登录，已列出模拟设备。", "info");
-      resetLoginUi();
-      return;
-    }
     try {
       await api("api/login", { method: "POST", body: {} });
     } catch (e) {

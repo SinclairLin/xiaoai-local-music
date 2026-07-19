@@ -44,7 +44,6 @@ class ConfigUpdate(BaseModel):
     music_root: str | None = None
     host: str | None = None
     port: int | None = None
-    mina_mode: str | None = None
     mina_device_id: str | None = None
     voice: VoiceConfigUpdate | None = None
 
