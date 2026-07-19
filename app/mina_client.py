@@ -67,10 +67,17 @@ class _CookieTokenAccount(MiAccount):
     ``MiAccount.mi_request`` normally clears a token after an auth failure and
     retries through ``login()``, which can trigger the account's OTP flow. A
     token obtained from the Cookies form must remain token-only so an expired
-    cookie is reported to that form instead of sending another SMS.
+    cookie is reported to that form instead of sending another SMS. ``login``
+    only loads the stored token and never contacts the account service.
     """
 
     async def login(self, sid: str) -> bool:
+        # 语音轮询在任何 mi_request 惰性加载 token 之前就调用 login()，
+        # 这里必须自行加载，否则粘贴的有效 token 永远不可见。
+        if self.token is None and self.token_store is not None:
+            self.token = await self.token_store.load_token()
+        if self.token and sid in self.token:
+            return True
         self._login_error = "Cookies token is unavailable or expired"
         return False
 

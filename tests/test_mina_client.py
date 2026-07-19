@@ -354,3 +354,51 @@ def test_cookie_token_account_preserves_token_and_skips_password_login(tmp_path:
     assert account.token["_auth_source"] == "cookies"
     assert json.loads(token_path.read_text(encoding="utf-8"))["micoapi"][1] == "cookie-token"
     assert len(session.calls) == 1
+
+
+def test_cookie_token_account_login_loads_stored_token_without_requests(tmp_path: Path) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({"userId": 1, "micoapi": ["sec", "cookie-token"], "_auth_source": "cookies"}),
+        encoding="utf-8",
+    )
+    session = FakeMiRequestSession()
+    account = _CookieTokenAccount(
+        session,
+        "user",
+        "password",
+        token_store=str(token_path),
+        otp_callback=_otp_unavailable,
+    )
+
+    assert asyncio.run(account.login("micoapi")) is True
+    assert account.token["micoapi"][1] == "cookie-token"
+    # token 中不存在的 sid 只报失败，绝不发起账号请求（不触发 OTP）。
+    assert asyncio.run(account.login("passportapi")) is False
+    assert session.calls == []
+
+
+def test_voice_events_cookie_account_loads_stored_token(tmp_path: Path) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({"userId": 1, "micoapi": ["sec", "tok"], "_auth_source": "cookies"}),
+        encoding="utf-8",
+    )
+    session = FakeConversationSession([
+        FakeConversationResponse(200, _conversation_body([
+            {"time": 5, "query": "播放稻香", "requestId": "c1"},
+        ])),
+    ])
+    service = FakeMiNAService(devices=[])
+    service.account = _CookieTokenAccount(
+        session,
+        None,
+        None,
+        token_store=str(token_path),
+        otp_callback=_otp_unavailable,
+    )
+    client = make_client(tmp_path, service)
+
+    events = client.fetch_voice_events("d1", "LX06", 0)
+
+    assert [event["query"] for event in events] == ["播放稻香"]
