@@ -114,8 +114,8 @@ def test_playback_methods_flip_argument_order(tmp_path: Path) -> None:
     ]
 
 
-def test_otp_callback_raises_auth_error_with_host_login_hint() -> None:
-    with pytest.raises(MinaAuthError, match="python -m miservice"):
+def test_otp_callback_raises_auth_error_with_console_login_hint() -> None:
+    with pytest.raises(MinaAuthError, match="账号与设备"):
         asyncio.run(_otp_unavailable("sms"))
 
 

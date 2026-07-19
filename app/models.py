@@ -51,3 +51,18 @@ class ConfigUpdate(BaseModel):
 
 class VolumeRequest(BaseModel):
     volume: int = Field(ge=0, le=100)
+
+
+class OtpSubmitRequest(BaseModel):
+    code: str = Field(min_length=1)
+
+
+class CookieLoginRequest(BaseModel):
+    """手动粘贴凭证登录；显式字段优先于 cookies 串中解析出的同名字段。"""
+
+    cookies: str | None = None
+    user_id: str | None = None
+    service_token: str | None = None
+    ssecurity: str | None = None
+    pass_token: str | None = None
+    device_id: str | None = None

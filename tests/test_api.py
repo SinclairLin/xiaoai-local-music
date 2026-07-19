@@ -1,9 +1,13 @@
 from pathlib import Path
+from contextlib import asynccontextmanager
+import time
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.login_session import LoginSessionManager
 from app.main import create_app
 from app.mina_client import MinaMiserviceClient, MockMinaClient
 from app.service import MusicService
@@ -37,6 +41,19 @@ def test_api_health_tracks_and_play(tmp_path) -> None:
         voice_response = client.post("/api/voice", json={"text": "播放 稻香"})
         assert voice_response.status_code == 200
         assert voice_response.json()["track"]["path"] == expected_url
+
+
+def test_index_serves_admin_page(tmp_path: Path) -> None:
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(tmp_path, public_base_url))
+    ) as client:
+        response = client.get("/")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert "小爱本地音乐 · 管理台" in response.text
 
 
 def test_voice_status_enable_and_logs(tmp_path: Path) -> None:
@@ -287,3 +304,202 @@ def test_config_update_flags_restart_required_and_rebuilds_client(tmp_path: Path
         assert same_value.json()["restart_required"] is False
         moved = client.put("/api/config", json={"music_root": str(tmp_path / "elsewhere")})
         assert moved.json()["restart_required"] is True
+
+
+class _OtpAccount:
+    """Fake MiAccount：走一轮 OTP 回调后登录成功。"""
+
+    def __init__(self, otp_callback) -> None:
+        self.otp_callback = otp_callback
+        self._login_error: str | None = None
+        self.received_code: str | None = None
+
+    async def login(self, sid: str) -> bool:
+        try:
+            self.received_code = await self.otp_callback("Phone")
+        except Exception as exc:
+            self._login_error = str(exc)
+            return False
+        return True
+
+    async def mi_request(self, sid: str, url: str, data: Any, headers: dict) -> dict:
+        return {"data": [{"deviceID": "d1", "alias": "客厅音箱"}]}
+
+
+def _fake_otp_manager() -> tuple[LoginSessionManager, list[_OtpAccount]]:
+    created: list[_OtpAccount] = []
+
+    @asynccontextmanager
+    async def factory(username, password, token_path, otp_callback):
+        account = _OtpAccount(otp_callback)
+        created.append(account)
+        yield account
+
+    return LoginSessionManager(account_factory=factory, otp_timeout_sec=2.0, total_timeout_sec=5.0), created
+
+
+def _poll_login(client: TestClient, *states: str, attempts: int = 100) -> dict:
+    for _ in range(attempts):
+        status = client.get("/api/login/status").json()
+        if status["status"] in states:
+            return status
+        time.sleep(0.02)
+    pytest.fail(f"login status never reached {states}: {status}")
+
+
+def test_login_endpoints_in_mock_mode(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    settings = Settings(public_base_url="http://speaker-host:8123", music_dir=tmp_path, mina_device_id="mock-device")
+
+    with TestClient(create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url, device_id="mock-device"))) as client:
+        assert client.get("/api/login/status").json()["status"] == "idle"
+        assert client.post("/api/login/otp", json={"code": "123456"}).status_code == 409
+        response = client.post("/api/login")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "success"
+        assert body["devices"] == [{"id": "mock-device", "name": "Mock Mina"}]
+        assert client.post("/api/login/cancel").status_code == 200
+
+
+def test_cookie_login_writes_token_and_lists_devices(tmp_path: Path) -> None:
+    import json
+
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_device_id="mock-device",
+    )
+
+    with TestClient(create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url, device_id="mock-device"))) as client:
+        response = client.post("/api/login/cookies", json={"cookies": "userId=123; serviceToken=tok; ssecurity=sec"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "success"
+        assert body["devices"] == [{"id": "mock-device", "name": "Mock Mina"}]
+        token = json.loads((config_dir / ".mi.token").read_text())
+        assert token["userId"] == 123
+        assert token["micoapi"] == ["sec", "tok"]
+
+        missing = client.post("/api/login/cookies", json={"cookies": "userId=123"})
+        assert missing.status_code == 422
+        assert "serviceToken" in missing.json()["detail"]
+
+        explicit = client.post("/api/login/cookies", json={"user_id": "9", "service_token": "tok2"})
+        assert explicit.status_code == 200
+        assert json.loads((config_dir / ".mi.token").read_text())["micoapi"] == ["", "tok2"]
+
+
+def test_cookie_login_rolls_back_token_on_invalid_credentials(tmp_path: Path) -> None:
+    from app.mina_client import MinaUpstreamError
+
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    token_path = config_dir / ".mi.token"
+    token_path.write_text('{"userId": 1, "micoapi": ["", "old"]}')
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_device_id="mock-device",
+    )
+
+    class FailingClient(MockMinaClient):
+        def __init__(self) -> None:
+            super().__init__("mock-device")
+            self.token_path = token_path
+
+        def list_devices(self):
+            raise MinaUpstreamError("Mina request failed: 401")
+
+    app = create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url, device_id="mock-device"))
+    app.state.service.mina_client = FailingClient()
+    with TestClient(app) as client:
+        response = client.post("/api/login/cookies", json={"cookies": "userId=2; serviceToken=bad"})
+        assert response.status_code == 401
+        assert "无效或已过期" in response.json()["detail"]
+        # 旧 token 被回滚保留
+        assert '"old"' in token_path.read_text()
+
+
+def test_login_requires_saved_credentials_in_miservice_mode(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    settings = Settings(
+        config_dir=tmp_path / "config",
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_mode="miservice",
+    )
+
+    with TestClient(create_app(settings=settings)) as client:
+        response = client.post("/api/login")
+        assert response.status_code == 422
+        assert "账号密码" in response.json()["detail"]
+
+
+def test_login_otp_http_flow(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    settings = Settings(
+        config_dir=tmp_path / "config",
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_mode="miservice",
+        xiaomi_user="user",
+        xiaomi_password="secret",
+    )
+    app = create_app(settings=settings)
+    manager, created = _fake_otp_manager()
+    app.state.login_manager = manager
+
+    with TestClient(app) as client:
+        assert client.post("/api/login").status_code == 200
+        status = _poll_login(client, "otp_required")
+        assert status["otp_method"] == "Phone"
+        assert client.post("/api/login").status_code == 409
+        # 纯空白验证码在路由层被拒绝，不消耗等待中的会话
+        assert client.post("/api/login/otp", json={"code": "   "}).status_code == 422
+        assert client.get("/api/login/status").json()["status"] == "otp_required"
+        assert client.post("/api/login/otp", json={"code": "654321"}).status_code == 200
+        status = _poll_login(client, "success")
+        assert status["devices"] == [{"id": "d1", "name": "客厅音箱"}]
+        assert created[0].received_code == "654321"
+
+
+def test_config_update_cancels_active_login_session(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    settings = Settings(
+        config_dir=tmp_path / "config",
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_mode="miservice",
+        xiaomi_user="user",
+        xiaomi_password="secret",
+    )
+    app = create_app(settings=settings)
+    manager, _ = _fake_otp_manager()
+    app.state.login_manager = manager
+
+    with TestClient(app) as client:
+        client.post("/api/login")
+        _poll_login(client, "otp_required")
+        assert client.put("/api/config", json={"xiaomi_password": "changed"}).status_code == 200
+        status = client.get("/api/login/status").json()
+        assert status["status"] == "failed"
+        assert "取消" in status["error"]
+
+
+def test_token_clear_endpoint(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / ".mi.token").write_text("{}", encoding="utf-8")
+    settings = Settings(config_dir=config_dir, public_base_url="http://speaker-host:8123", music_dir=tmp_path)
+
+    with TestClient(create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url))) as client:
+        assert client.post("/api/token/clear").json() == {"cleared": True}
+        assert not (config_dir / ".mi.token").exists()
+        assert client.post("/api/token/clear").json() == {"cleared": False}

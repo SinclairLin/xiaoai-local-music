@@ -1,0 +1,1123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>小爱本地音乐 · 管理台</title>
+<style>
+/* ── Neutral Modern tokens (design-systems/default/tokens.css) ── */
+:root {
+  /* Surface (3 levels) */
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-warm: var(--surface);
+  /* Foreground ramp (4 levels) */
+  --fg: #111111;
+  --fg-2: var(--fg);
+  --muted: #6b6b6b;
+  --meta: var(--muted);
+  /* Border (2 levels) */
+  --border: #e5e5e5;
+  --border-soft: var(--border);
+  /* Accent */
+  --accent: #2f6feb;
+  --accent-on: #ffffff;
+  --accent-hover: color-mix(in oklab, var(--accent), black 8%);
+  --accent-active: color-mix(in oklab, var(--accent), black 14%);
+  /* Semantic */
+  --success: #17a34a;
+  --warn: #eab308;
+  --danger: #dc2626;
+  /* Typography */
+  --font-display: "Inter", -apple-system, system-ui, sans-serif;
+  --font-body: "Inter", -apple-system, system-ui, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", monospace;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 20px;
+  --text-xl: 24px;
+  --text-2xl: 32px;
+  --text-3xl: 48px;
+  --text-4xl: 64px;
+  --leading-body: 1.5;
+  --leading-tight: 1.2;
+  --tracking-display: -0.01em;
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-20: 80px;
+  --section-y-desktop: 80px;
+  --section-y-tablet: 48px;
+  --section-y-phone: 32px;
+  /* Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 9999px;
+  /* Elevation */
+  --elev-flat: none;
+  --elev-ring: 0 0 0 1px var(--border);
+  --elev-raised: 0 2px 8px color-mix(in oklab, var(--fg), transparent 92%);
+  /* Focus ring */
+  --focus-ring: 0 0 0 3px color-mix(in oklab, var(--accent), transparent 70%);
+  /* Motion */
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  /* Layout */
+  --container-max: 1200px;
+  --container-gutter-desktop: 24px;
+  --container-gutter-tablet: 16px;
+  --container-gutter-phone: 12px;
+}
+
+/* ── Base ── */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 400 var(--text-sm)/var(--leading-body) var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; line-height: var(--leading-tight); margin: 0; }
+p { margin: 0; }
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--muted); }
+.container { max-width: var(--container-max); margin: 0 auto; padding: 0 var(--container-gutter-desktop); }
+:where(button, input, select, a, [tabindex]):focus-visible { outline: none; box-shadow: var(--focus-ring); }
+svg.ic { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.7; fill: none; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* ── Header ── */
+.topbar { position: sticky; top: 0; z-index: 20; background: color-mix(in oklab, var(--surface), transparent 8%); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+.topbar-in { display: flex; align-items: center; gap: var(--space-3); min-height: 56px; flex-wrap: wrap; padding-top: var(--space-2); padding-bottom: var(--space-2); }
+.brand { display: flex; align-items: center; gap: var(--space-2); margin-right: auto; }
+.brand h1 { font-size: var(--text-base); letter-spacing: 0; }
+.brand .tag { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 1px 8px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); letter-spacing: 0.02em; padding: 3px 10px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface); color: var(--muted); max-width: 46vw; }
+.badge .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.badge.ok { color: color-mix(in oklab, var(--success), black 30%); border-color: color-mix(in oklab, var(--success), transparent 70%); background: color-mix(in oklab, var(--success), transparent 93%); }
+.badge.ok .dot { background: var(--success); }
+.badge.warn { color: color-mix(in oklab, var(--warn), var(--fg) 55%); border-color: color-mix(in oklab, var(--warn), transparent 60%); background: color-mix(in oklab, var(--warn), transparent 92%); }
+.badge.warn .dot { background: var(--warn); }
+.badge.err { color: var(--danger); border-color: color-mix(in oklab, var(--danger), transparent 70%); background: color-mix(in oklab, var(--danger), transparent 93%); }
+.badge.err .dot { background: var(--danger); }
+
+/* ── Banners ── */
+.banner { display: none; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-4); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid; font-size: var(--text-sm); }
+.banner.show { display: flex; }
+.banner.warn { border-color: color-mix(in oklab, var(--warn), transparent 55%); background: color-mix(in oklab, var(--warn), transparent 92%); }
+.banner.err { border-color: color-mix(in oklab, var(--danger), transparent 65%); background: color-mix(in oklab, var(--danger), transparent 94%); color: var(--danger); }
+.banner button { margin-left: auto; border: 0; background: none; color: inherit; cursor: pointer; font-size: var(--text-xs); padding: 2px 6px; border-radius: var(--radius-sm); }
+
+/* ── Layout & tabs ── */
+.layout { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--space-6); align-items: start; padding-top: var(--space-6); padding-bottom: var(--space-12); }
+.layout[data-tab="config"] { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.layout > section { display: none; }
+.layout[data-tab="play"] > section[data-tab="play"],
+.layout[data-tab="session"] > section[data-tab="session"],
+.layout[data-tab="monitor"] > section[data-tab="monitor"],
+.layout[data-tab="config"] > section[data-tab="config"] { display: block; }
+#player-card { order: 1; } #library-card { order: 2; } #account-card { order: 3; } #devices-card { order: 4; }
+#voice-card { order: 5; } #logs-card { order: 6; } #config-card { order: 7; } #media-card { order: 8; }
+.tabbar { display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none; }
+.tabbar::-webkit-scrollbar { display: none; }
+.tab { position: relative; appearance: none; border: 0; background: none; color: var(--muted); font: 500 var(--text-sm)/1 var(--font-body); letter-spacing: 0.02em; padding: 12px 14px; cursor: pointer; white-space: nowrap; transition: color var(--motion-fast) var(--ease-standard); }
+.tab:hover { color: var(--fg); }
+.tab[aria-current] { color: var(--fg); font-weight: 600; }
+.tab[aria-current]::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px; background: var(--fg); border-radius: 1px; }
+.tab .alert-dot { display: none; position: absolute; top: 8px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
+.tab.has-alert .alert-dot { display: block; }
+
+/* ── Cards ── */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-5); min-width: 0; }
+.card-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.card-head .titles { margin-right: auto; min-width: 0; }
+.eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display: block; }
+.card-head h2 { font-size: var(--text-lg); margin-top: 2px; }
+.hint { font-size: var(--text-xs); color: var(--muted); }
+
+/* ── Buttons ── */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 8px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--fg); font: 500 var(--text-sm)/1 var(--font-body); letter-spacing: 0.02em; cursor: pointer; transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard); white-space: nowrap; }
+.btn:hover { background: color-mix(in oklab, var(--fg), transparent 96%); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: var(--accent); border-color: transparent; color: var(--accent-on); box-shadow: var(--elev-raised); }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:active { background: var(--accent-active); }
+.btn-danger { color: var(--danger); border-color: color-mix(in oklab, var(--danger), transparent 60%); }
+.btn-danger:hover { background: color-mix(in oklab, var(--danger), transparent 94%); }
+.btn-sm { min-height: 32px; padding: 4px 10px; font-size: var(--text-xs); }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; transition: background var(--motion-fast) var(--ease-standard); flex: none; }
+.icon-btn:hover { background: color-mix(in oklab, var(--fg), transparent 96%); }
+.icon-btn:active { transform: translateY(1px); }
+
+/* ── Fields ── */
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-3); min-width: 0; }
+.field label { font-size: var(--text-xs); font-weight: 500; letter-spacing: 0.02em; color: var(--fg); }
+.field input[type="text"], .field input[type="password"], .field input[type="url"], .field input[type="number"], .field input[type="search"], .field textarea {
+  width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg); font: 400 var(--text-sm)/1.4 var(--font-body); transition: border-color var(--motion-fast) var(--ease-standard);
+}
+.field textarea { resize: vertical; font-family: var(--font-mono, monospace); }
+.field input::placeholder, .field textarea::placeholder { color: color-mix(in oklab, var(--muted), transparent 25%); }
+details.adv > summary { cursor: pointer; font-size: var(--text-xs); color: var(--muted); user-select: none; }
+details.adv[open] > summary { margin-bottom: var(--space-2); }
+.field-help { font-size: var(--text-xs); color: var(--muted); }
+.switch-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; }
+.switch-row .lbl { font-size: var(--text-sm); }
+.switch-row .sub { font-size: var(--text-xs); color: var(--muted); }
+.sw { position: relative; display: inline-block; width: 40px; height: 24px; flex: none; margin-left: auto; }
+.sw input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.sw .tr { position: absolute; inset: 0; border-radius: var(--radius-pill); background: color-mix(in oklab, var(--muted), transparent 55%); transition: background var(--motion-fast) var(--ease-standard); pointer-events: none; }
+.sw .tr::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); box-shadow: var(--elev-raised); transition: transform var(--motion-fast) var(--ease-standard); }
+.sw input:checked + .tr { background: var(--accent); }
+.sw input:checked + .tr::after { transform: translateX(16px); }
+.sw input:focus-visible + .tr { box-shadow: var(--focus-ring); }
+.seg { display: flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.seg label { flex: 1; text-align: center; padding: 8px 4px; font-size: var(--text-xs); letter-spacing: 0.02em; cursor: pointer; color: var(--muted); background: var(--surface); transition: background var(--motion-fast) var(--ease-standard); }
+.seg label + label { border-left: 1px solid var(--border); }
+.seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.seg label:has(input:checked) { background: var(--fg); color: var(--bg); font-weight: 500; }
+.seg label:has(input:focus-visible) { box-shadow: var(--focus-ring); position: relative; z-index: 1; }
+.pv-btn { width: 32px; height: 32px; }
+
+/* ── Player ── */
+.state-chip { font-size: var(--text-xs); letter-spacing: 0.02em; border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 3px 10px; color: var(--muted); flex: none; }
+.state-chip.playing { color: color-mix(in oklab, var(--success), black 30%); border-color: color-mix(in oklab, var(--success), transparent 70%); background: color-mix(in oklab, var(--success), transparent 93%); }
+.now { padding: var(--space-2) 0 var(--space-4); }
+.now-title { font-family: var(--font-display); font-size: var(--text-xl); font-weight: 600; letter-spacing: var(--tracking-display); line-height: var(--leading-tight); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.now-sub { margin-top: 6px; font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; margin-right: 8px; vertical-align: -2px; }
+.eq i { width: 3px; background: var(--success); border-radius: 1px; animation: eq 0.9s var(--ease-standard) infinite; }
+.eq i:nth-child(2) { animation-delay: 0.2s; } .eq i:nth-child(3) { animation-delay: 0.45s; }
+@keyframes eq { 0%, 100% { height: 4px; } 50% { height: 14px; } }
+@media (prefers-reduced-motion: reduce) { .eq i { animation: none; height: 8px; } .toast { animation: none; } }
+.controls { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.play-main { width: 52px; height: 52px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-on); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: var(--elev-raised); transition: background var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard); flex: none; }
+.play-main:hover { background: var(--accent-hover); }
+.play-main:active { transform: scale(0.96); }
+.play-main svg { width: 22px; height: 22px; fill: currentColor; stroke: none; }
+.ctl-ic svg { fill: currentColor; stroke: none; width: 18px; height: 18px; }
+.vol { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; min-width: 150px; flex: 1; max-width: 240px; }
+.vol input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 80px; }
+.vol .v { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); width: 4ch; text-align: right; }
+.qhead { display: flex; align-items: baseline; gap: var(--space-2); margin: var(--space-4) 0 var(--space-2); border-top: 1px solid var(--border-soft); padding-top: var(--space-4); }
+.qhead h3 { font-size: var(--text-sm); }
+
+/* ── Lists (queue / tracks / devices) ── */
+.list { display: flex; flex-direction: column; max-height: 280px; overflow-y: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+.list:empty { display: none; }
+.row { display: flex; align-items: center; gap: var(--space-2); padding: 8px 12px; min-height: 44px; border-bottom: 1px solid var(--border-soft); background: var(--surface); }
+.row:last-child { border-bottom: 0; }
+.row .meta { min-width: 0; flex: 1; }
+.row .t { font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .s { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row.current { background: color-mix(in oklab, var(--fg), transparent 96%); }
+.row.current .t { font-weight: 600; }
+.row.sel-device { cursor: pointer; }
+.row.sel-device:hover { background: color-mix(in oklab, var(--fg), transparent 97%); }
+.row .check { color: var(--success); visibility: hidden; }
+.row.selected .check { visibility: visible; }
+.empty { padding: var(--space-5); border: 1px dashed var(--border); border-radius: var(--radius-sm); text-align: center; font-size: var(--text-xs); color: var(--muted); }
+
+/* ── Logs ── */
+.loglist { display: flex; flex-direction: column; gap: 2px; max-height: clamp(280px, 60vh, 560px); overflow-y: auto; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; }
+.log { display: flex; gap: 8px; align-items: baseline; padding: 3px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+.log:nth-child(odd) { background: color-mix(in oklab, var(--fg), transparent 97.5%); }
+.log .tm { color: var(--muted); flex: none; }
+.log .oc { flex: none; font-weight: 500; min-width: 5.5ch; }
+.log .oc.ok { color: color-mix(in oklab, var(--success), black 30%); }
+.log .oc.error { color: var(--danger); }
+.log .oc.other { color: var(--muted); }
+.log .bd { min-width: 0; }
+.log .bd .er { color: var(--danger); }
+
+/* ── Callouts & notes ── */
+.callout { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-3); background: color-mix(in oklab, var(--fg), transparent 97.5%); }
+.callout .cap { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.callout .cap .icon-btn { margin-left: auto; width: 28px; height: 28px; border-radius: 6px; }
+.urlbox { font-family: var(--font-mono); font-size: var(--text-xs); overflow-wrap: anywhere; word-break: break-all; line-height: 1.6; }
+.note { display: none; margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); font-size: var(--text-xs); line-height: 1.6; border: 1px solid var(--border); overflow-wrap: anywhere; }
+.note.show { display: block; }
+.note.info { background: color-mix(in oklab, var(--fg), transparent 97%); color: var(--fg); }
+.note.err { border-color: color-mix(in oklab, var(--danger), transparent 65%); background: color-mix(in oklab, var(--danger), transparent 95%); color: var(--danger); }
+.note.warn2 { border-color: color-mix(in oklab, var(--warn), transparent 55%); background: color-mix(in oklab, var(--warn), transparent 93%); color: color-mix(in oklab, var(--warn), var(--fg) 55%); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: var(--text-xs); }
+.kv dt { color: var(--muted); white-space: nowrap; }
+.kv dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-2); }
+.divider { border: 0; border-top: 1px solid var(--border-soft); margin: var(--space-4) 0; }
+
+/* ── Toasts ── */
+#toasts { position: fixed; bottom: var(--space-4); right: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); z-index: 50; max-width: min(360px, calc(100vw - 24px)); }
+.toast { background: var(--fg); color: var(--bg); border-radius: var(--radius-sm); padding: 10px 14px; font-size: var(--text-xs); line-height: 1.5; box-shadow: var(--elev-raised); overflow-wrap: anywhere; animation: rise var(--motion-base) var(--ease-standard); }
+.toast.err { background: var(--danger); color: var(--accent-on); }
+.toast.ok { background: color-mix(in oklab, var(--success), black 30%); color: var(--accent-on); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ── Responsive ── */
+@media (max-width: 1023px) {
+  .container { padding: 0 var(--container-gutter-tablet); }
+  .layout, .layout[data-tab="config"] { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 639px) {
+  .container { padding: 0 var(--container-gutter-phone); }
+  .layout { gap: var(--space-4); padding-top: var(--space-4); }
+  .tab { padding: 10px; font-size: 13px; }
+  .topbar { position: static; border-bottom: 0; }
+  .tabbar { position: sticky; top: 0; z-index: 20; background: color-mix(in oklab, var(--surface), transparent 8%); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); margin: 0 calc(-1 * var(--container-gutter-phone)); padding: 0 var(--container-gutter-phone); }
+  .card { padding: var(--space-4); }
+  .field input, .btn { font-size: var(--text-base); }
+  .btn, .btn-sm { min-height: 44px; }
+  .icon-btn, .pv-btn { width: 44px; height: 44px; }
+  .row { min-height: 52px; }
+  .vol { max-width: none; width: 100%; }
+  .brand .tag { display: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar" data-od-id="app-header">
+  <div class="container">
+    <div class="topbar-in">
+    <div class="brand" data-od-id="brand">
+      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="3"/><circle cx="12" cy="14.5" r="3.5"/><circle cx="12" cy="7.5" r="1"/></svg>
+      <h1>小爱本地音乐</h1>
+      <span class="tag">Admin Console</span>
+    </div>
+    <span class="badge" id="connBadge" data-od-id="conn-badge"><span class="dot"></span><span class="txt">连接中…</span></span>
+    <span class="badge" id="voiceBadge" data-od-id="voice-badge"><span class="dot"></span><span class="txt">语音状态未知</span></span>
+    <span class="badge" id="deviceBadge" data-od-id="device-badge"><span class="dot"></span><span class="txt">未选设备</span></span>
+    </div>
+    <nav class="tabbar" aria-label="功能分区" data-od-id="tab-bar">
+      <button class="tab" id="tab-play" aria-current="true" data-od-id="tab-play">播放与曲库</button>
+      <button class="tab" id="tab-session" data-od-id="tab-session">账号与设备</button>
+      <button class="tab" id="tab-monitor" data-od-id="tab-monitor">语音与日志<span class="alert-dot" aria-hidden="true"></span></button>
+      <button class="tab" id="tab-config" data-od-id="tab-config">服务配置</button>
+    </nav>
+  </div>
+</header>
+
+<div class="container">
+  <div class="banner err" id="offlineBanner" data-od-id="offline-banner">
+    <strong>无法连接服务端。</strong>&nbsp;请确认服务已启动，且本页面与 API 同源部署（接口按相对路径 <span class="mono">./api/*</span> 调用）。
+  </div>
+  <div class="banner warn" id="restartBanner" data-od-id="restart-banner">
+    <span><strong>配置已保存，但需重启服务生效。</strong>&nbsp;public_base_url、music_root、host、port 仅在进程启动时读取。</span>
+    <button type="button" id="restartDismiss">知道了</button>
+  </div>
+</div>
+
+<main class="container layout" id="mainLayout" data-tab="play" data-od-id="main-layout">
+
+    <!-- 播放控制 -->
+    <section class="card" id="player-card" data-tab="play" data-od-id="player-card">
+      <div class="card-head">
+        <div class="titles"><span class="eyebrow">Player</span><h2>播放控制</h2></div>
+        <span class="state-chip" id="playerState">空闲</span>
+      </div>
+      <div class="now">
+        <div class="now-title" id="nowTitle" data-od-id="now-playing-title">未在播放</div>
+        <div class="now-sub" id="nowSub">从曲库搜索并推送一首歌开始</div>
+      </div>
+      <div class="controls" data-od-id="player-controls">
+        <button class="icon-btn ctl-ic" id="btnPrev" title="上一首" aria-label="上一首"><svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6zM19 5.8v12.4c0 .8-.9 1.3-1.6.9l-9-6.2a1 1 0 0 1 0-1.7l9-6.2c.7-.5 1.6 0 1.6.8z"/></svg></button>
+        <button class="play-main" id="btnPlay" title="播放 / 暂停" aria-label="播放或暂停" data-od-id="play-pause-btn"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.6-6.2a1 1 0 0 0 0-1.7L9.6 4.9c-.7-.4-1.6 0-1.6.9z"/></svg></button>
+        <button class="icon-btn ctl-ic" id="btnNext" title="下一首" aria-label="下一首"><svg viewBox="0 0 24 24"><path d="M15.5 5H18v14h-2.5zM5 5.8v12.4c0 .8.9 1.3 1.6.9l9-6.2a1 1 0 0 0 0-1.7l-9-6.2C5.9 4.6 5 5 5 5.8z"/></svg></button>
+        <button class="icon-btn ctl-ic" id="btnStop" title="停止" aria-label="停止"><svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/></svg></button>
+        <div class="vol" data-od-id="volume-control">
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6"/></svg>
+          <input type="range" id="vol" min="0" max="100" step="5" value="30" aria-label="推送音量">
+          <span class="v" id="volVal">30</span>
+        </div>
+      </div>
+      <div class="qhead"><h3>播放队列</h3><span class="hint" id="queueCount">空</span></div>
+      <div class="list" id="queueList" data-od-id="queue-list"></div>
+      <div class="empty" id="queueEmpty">队列为空 — 在曲库中点击「推送」即可把搜索结果整组入队</div>
+    </section>
+
+    <!-- 曲库 -->
+    <section class="card" id="library-card" data-tab="play" data-od-id="library-card">
+      <div class="card-head">
+        <div class="titles"><span class="eyebrow">Library</span><h2>曲库</h2></div>
+        <button class="btn btn-sm" id="btnRescan" data-od-id="rescan-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 3.5V8h-4.5"/></svg>重新扫描</button>
+      </div>
+      <form id="searchForm" style="display:flex; gap:8px;" data-od-id="library-search">
+        <div class="field" style="flex:1; margin-bottom:0;">
+          <input type="search" id="searchInput" placeholder="搜索歌名 / 文件名，留空列出全部" aria-label="搜索曲库">
+        </div>
+        <button class="btn" type="submit"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/></svg>搜索</button>
+      </form>
+      <p class="hint" id="trackCount" style="margin:10px 0 8px;">尚未加载曲目</p>
+      <div class="list" id="trackList" style="max-height:320px;" data-od-id="track-list"></div>
+      <div class="empty" id="trackEmpty">曲库尚未加载 — 服务在线后自动列出全部曲目</div>
+    </section>
+
+    <!-- 日志 -->
+    <section class="card" id="logs-card" data-tab="monitor" data-od-id="logs-card">
+      <div class="card-head">
+        <div class="titles"><span class="eyebrow">Logs</span><h2>语音与播放日志</h2></div>
+        <span class="hint">每 4 秒刷新 · 最近 80 条</span>
+      </div>
+      <div class="loglist" id="logList" data-od-id="log-list"></div>
+      <div class="empty" id="logEmpty">暂无日志 — 启用语音劫持或触发一次播放后，这里会显示轮询与执行记录</div>
+    </section>
+
+    <!-- 设备 -->
+    <section class="card" id="devices-card" data-tab="session" data-od-id="devices-card">
+      <div class="card-head">
+        <div class="titles"><span class="eyebrow">Devices</span><h2>音箱设备</h2></div>
+        <button class="btn btn-sm" id="btnDevRefresh" data-od-id="device-refresh-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 3.5V8h-4.5"/></svg>刷新列表</button>
+      </div>
+      <p class="hint" style="margin-bottom:10px;">miservice 模式下「刷新列表」会用已保存的凭据真实登录小米云。点击设备即选中并写入配置。</p>
+      <div class="list" id="deviceList" data-od-id="device-list"></div>
+      <div class="empty" id="deviceEmpty">尚未获取设备 — 保存小米账号后点击「刷新列表」</div>
+      <div class="note" id="devNote" role="status"></div>
+    </section>
+
+    <!-- 语音 -->
+    <section class="card" id="voice-card" data-tab="monitor" data-od-id="voice-card">
+      <div class="card-head">
+        <div class="titles"><span class="eyebrow">Voice</span><h2>语音劫持</h2></div>
+      </div>
+      <div class="switch-row" data-od-id="voice-switch-row">
+        <div><div class="lbl" id="voiceStateText">状态未知</div><div class="sub">轮询「小爱同学」对话记录并接管播放指令</div></div>
+        <label class="sw"><input type="checkbox" id="voiceSwitch" aria-label="启用语音劫持"><span class="tr"></span></label>
+      </div>
+      <dl class="kv" id="voiceMeta" data-od-id="voice-meta">
+        <dt>事件源</dt><dd id="vSource">—</dd>
+        <dt>上次轮询</dt><dd id="vPoll">—</dd>
+        <dt>上次命中</dt><dd id="vEvent">—</dd>
+        <dt>连续错误</dt><dd id="vErrs">—</dd>
+        <dt>当前退避</dt><dd id="vBackoff">—</dd>
+        <dt>hardware</dt><dd id="vHw">—</dd>
+      </dl>
+      <div class="note err" id="voiceErr" role="status"></div>
+      <hr class="divider">
+      <form id="voiceForm" style="display:flex; gap:8px;" data-od-id="voice-test-form">
+        <div class="field" style="flex:1; margin-bottom:0;">
+          <input type="text" id="voiceText" placeholder="模拟语音指令，如：播放 稻香" aria-label="模拟语音指令">
+        </div>
+        <button class="btn" type="submit">执行</button>
+      </form>
+      <p class="field-help" style="margin-top:6px;">直接调用 <span class="mono">POST api/voice</span>，可在不喊小爱的情况下验证指令解析与播放链路。</p>
+    </section>
+
+    <!-- 小米账号 -->
+    <section class="card" id="account-card" data-tab="session" data-od-id="account-card">
+      <div class="card-head">
+        <div class="titles"><span class="eyebrow">Account</span><h2>小米账号</h2></div>
+        <span class="state-chip" id="credChip">未配置</span>
+      </div>
+      <div class="field">
+        <label for="modeSeg">客户端模式</label>
+        <div class="seg" id="modeSeg" role="radiogroup" aria-label="客户端模式">
+          <label><input type="radio" name="minaMode" value="miservice" id="modeMi">miservice（真实音箱）</label>
+          <label><input type="radio" name="minaMode" value="mock" id="modeMock">mock（本地调试）</label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="accUser">小米账号</label>
+        <input type="text" id="accUser" autocomplete="username" placeholder="手机号 / 邮箱 / ID">
+      </div>
+      <div class="field">
+        <label for="accPass">密码</label>
+        <input type="password" id="accPass" autocomplete="current-password" placeholder="未设置">
+        <span class="field-help">修改账号或密码保存后会自动删除旧 token，下次调用重新登录。</span>
+      </div>
+      <div class="field" id="otpRow" style="display:none;" data-od-id="otp-row">
+        <label for="otpCode">验证码</label>
+        <input type="text" id="otpCode" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位验证码">
+        <span class="field-help" id="otpHint"></span>
+        <div class="actions">
+          <button class="btn btn-primary" id="btnOtpSubmit" data-od-id="otp-submit-btn">提交验证码</button>
+          <button class="btn" id="btnOtpCancel" data-od-id="otp-cancel-btn">取消登录</button>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btnLogin" data-od-id="login-btn">保存并登录</button>
+        <button class="btn btn-danger" id="btnClearToken" data-od-id="clear-token-btn">清除 token</button>
+      </div>
+      <hr class="divider">
+      <details class="adv" id="cookieLoginBox" data-od-id="cookie-login-box">
+        <summary>Cookies 登录（高级）— 无法使用账号密码时的备选方案</summary>
+        <div class="field">
+          <label for="cookieInput">凭证</label>
+          <textarea id="cookieInput" rows="4" placeholder="userId=xxx; serviceToken=xxx&#10;或直接粘贴 .mi.token 文件的 JSON 内容"></textarea>
+          <span class="field-help">在其他已登录设备上复制 <span class="mono">.mi.token</span> 文件内容，或抓包 <span class="mono">api2.mina.mi.com</span> 请求 Cookie 中的 userId / serviceToken。凭证由小米侧签发，过期后需重新获取并粘贴。</span>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" id="btnCookieLogin" data-od-id="cookie-login-btn">使用 Cookies 登录</button>
+        </div>
+      </details>
+      <div class="note" id="accNote" role="status" data-od-id="account-note"></div>
+    </section>
+
+    <!-- 服务配置 -->
+    <section class="card" id="config-card" data-tab="config" data-od-id="config-card">
+      <div class="card-head">
+        <div class="titles"><span class="eyebrow">Config</span><h2>服务配置</h2></div>
+      </div>
+      <div class="field">
+        <label for="cfgUrl">public_base_url（音箱取流地址）</label>
+        <input type="url" id="cfgUrl" placeholder="http://192.168.1.10:8123" inputmode="url">
+        <span class="field-help" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">音箱通过该地址拉取音频，必须是绝对 HTTP(S) 地址。<button type="button" class="btn btn-sm" id="btnUseOrigin">填入当前页面地址</button></span>
+      </div>
+      <div class="field">
+        <label for="cfgPoll">语音轮询间隔（秒）</label>
+        <input type="number" id="cfgPoll" min="0.2" step="0.1" placeholder="1.5" inputmode="decimal">
+      </div>
+      <div class="field">
+        <label for="cfgHw">voice.hardware（音箱硬件型号）</label>
+        <input type="text" id="cfgHw" placeholder="如 L05B / LX06，启用语音劫持时必填">
+      </div>
+      <div class="switch-row">
+        <div><div class="lbl">接管所有「播放」指令</div><div class="sub">hijack_all_play</div></div>
+        <label class="sw"><input type="checkbox" id="cfgHijack" aria-label="接管所有播放指令（hijack_all_play）"><span class="tr"></span></label>
+      </div>
+      <div class="switch-row">
+        <div><div class="lbl">播放前语音播报确认</div><div class="sub">speak_confirm</div></div>
+        <label class="sw"><input type="checkbox" id="cfgConfirm" aria-label="播放前语音播报确认（speak_confirm）"><span class="tr"></span></label>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btnSaveCfg" data-od-id="save-config-btn">保存配置</button>
+      </div>
+      <div class="note" id="cfgNote" role="status"></div>
+    </section>
+
+    <!-- 媒体地址与可达性 -->
+    <section class="card" id="media-card" data-tab="config" data-od-id="media-card">
+      <div class="card-head">
+        <div class="titles"><span class="eyebrow">Media URL</span><h2>媒体地址与可达性</h2></div>
+      </div>
+      <div class="callout" data-od-id="media-url-callout">
+        <div class="cap">公开媒体 URL 示例
+          <button class="icon-btn" id="btnCopyUrl" title="复制示例 URL" aria-label="复制示例 URL"><svg class="ic" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button>
+        </div>
+        <div class="urlbox" id="urlExample">加载配置后显示</div>
+      </div>
+      <div class="note warn2 show" id="urlWarn" data-od-id="reachability-warning">请确认音箱所在网络可以直接访问上面的地址：与服务同网段、端口未被防火墙拦截；回环地址（127.0.0.1 / localhost）音箱无法访问。</div>
+      <dl class="kv" id="runtimeInfo" style="margin-top:12px;" data-od-id="runtime-info">
+        <dt>music_root</dt><dd id="riMusic">—</dd>
+        <dt>监听</dt><dd id="riHost">—</dd>
+        <dt>config_dir</dt><dd id="riCfg">—</dd>
+      </dl>
+    </section>
+</main>
+
+<div id="toasts" role="status" aria-live="polite"></div>
+<audio id="preview" preload="none"></audio>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const MASK = "********";
+const state = { cfg: null, queue: null, voice: null, tracks: [], devices: [], selectedDevice: null, previewId: null, failStreak: 0, online: null };
+
+/* ── API ── */
+async function api(path, opts = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch(path, {
+      method: opts.method || "GET",
+      headers: opts.body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: ctrl.signal,
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (_) { data = null; }
+    if (!res.ok) {
+      const detail = data && (data.detail || data.message);
+      const err = new Error(detail ? String(detail) : "HTTP " + res.status);
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("请求超时（12 秒）");
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+
+/* ── UI helpers ── */
+function toast(msg, type = "info", ms = 4000) {
+  const el = document.createElement("div");
+  el.className = "toast" + (type === "err" ? " err" : type === "ok" ? " ok" : "");
+  el.textContent = msg;
+  $("toasts").appendChild(el);
+  setTimeout(() => el.remove(), type === "err" ? Math.max(ms, 6000) : ms);
+}
+function note(id, text, kind = "info") {
+  const el = $(id);
+  if (!text) { el.className = "note"; el.innerHTML = ""; return; }
+  el.className = "note show " + (kind === "err" ? "err" : kind === "warn" ? "warn2" : "info");
+  el.innerHTML = text;
+}
+function setBadge(id, text, kind) {
+  const el = $(id);
+  el.className = "badge" + (kind ? " " + kind : "");
+  el.querySelector(".txt").textContent = text;
+}
+function fmtClock(sec) {
+  if (!sec) return "—";
+  const d = new Date(sec * 1000);
+  return d.toTimeString().slice(0, 8);
+}
+function rel(sec) {
+  if (!sec) return "—";
+  const diff = Math.max(0, Date.now() / 1000 - sec);
+  if (diff < 60) return Math.round(diff) + " 秒前";
+  if (diff < 3600) return Math.round(diff / 60) + " 分钟前";
+  return fmtClock(sec);
+}
+function fmtSize(bytes) {
+  if (!bytes) return "";
+  return bytes >= 1048576 ? (bytes / 1048576).toFixed(1) + " MB" : Math.round(bytes / 1024) + " KB";
+}
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); } finally { ta.remove(); }
+  return Promise.resolve();
+}
+
+/* ── Connection ── */
+function setOnline(ok) {
+  if (ok) { state.failStreak = 0; } else { state.failStreak += 1; }
+  const online = ok ? true : state.failStreak < 2 ? state.online : false;
+  if (online === state.online) return;
+  const prev = state.online;
+  state.online = online;
+  $("offlineBanner").classList.toggle("show", online === false);
+  setBadge("connBadge", online ? "服务在线" : "服务离线", online ? "ok" : "err");
+  if (online && prev === false) {
+    toast("已恢复连接，正在重新加载数据", "ok", 2500);
+    loadConfig().catch(() => {});
+    refreshDevices(true);
+    searchTracks($("searchInput").value.trim()).catch(() => {});
+  }
+}
+
+/* ── Config ── */
+function renderConfig() {
+  const c = state.cfg;
+  if (!c) return;
+  $("cfgUrl").value = c.public_base_url || "";
+  $("cfgPoll").value = c.voice ? c.voice.poll_interval_sec : "";
+  $("cfgHw").value = (c.voice && c.voice.hardware) || "";
+  $("cfgHijack").checked = !!(c.voice && c.voice.hijack_all_play);
+  $("cfgConfirm").checked = !!(c.voice && c.voice.speak_confirm);
+  $("accUser").value = c.xiaomi_user || "";
+  $("accPass").value = "";
+  $("accPass").placeholder = c.xiaomi_password ? "已设置（留空保持不变）" : "未设置";
+  ($("modeMi").checked = c.mina_mode === "miservice") || ($("modeMock").checked = true);
+  const chip = $("credChip");
+  chip.textContent = c.xiaomi_user && c.xiaomi_password ? "凭据已配置" : "未配置凭据";
+  chip.className = "state-chip" + (c.xiaomi_user && c.xiaomi_password ? " playing" : "");
+  $("riMusic").textContent = c.music_root || "—";
+  $("riHost").textContent = (c.host || "—") + ":" + (c.port || "—");
+  $("riCfg").textContent = c.config_dir || "—";
+  renderUrlExample();
+}
+function renderUrlExample() {
+  const c = state.cfg;
+  if (!c) return;
+  const sample = state.tracks.length ? state.tracks[0].id : "{track_id}";
+  $("urlExample").textContent = (c.public_base_url || "http://<局域网IP>:" + (c.port || 8123)) + "/media/by-id/" + sample;
+  let warnText = "请确认音箱所在网络可以直接访问上面的地址：与服务同网段、端口未被防火墙拦截。";
+  let kind = "warn";
+  try {
+    const u = new URL(c.public_base_url);
+    if (/^(localhost|127\.|0\.0\.0\.0)/.test(u.hostname)) {
+      warnText = "public_base_url 指向本机回环地址，音箱将无法取流 — 请改为局域网 IP，例如 http://192.168.x.x:" + (c.port || 8123) + "。";
+      kind = "err";
+    } else if (/^https?:$/.test(location.protocol) && location.hostname && u.hostname !== location.hostname) {
+      warnText = "当前页面经 " + location.host + " 访问，媒体地址却是 " + u.host + " — 两者可以不同，但音箱必须能直达后者（同网段、端口放行）。";
+    }
+  } catch (_) {
+    warnText = "public_base_url 为空或不是合法的绝对 URL，音箱将无法取流。";
+    kind = "err";
+  }
+  const w = $("urlWarn");
+  w.textContent = warnText;
+  w.className = "note show " + (kind === "err" ? "err" : "warn2");
+}
+async function loadConfig() {
+  state.cfg = await api("api/config");
+  if (!state.selectedDevice && state.cfg.mina_device_id) state.selectedDevice = state.cfg.mina_device_id;
+  renderConfig();
+  renderDevices();
+}
+async function saveConfig() {
+  const btn = $("btnSaveCfg");
+  btn.disabled = true; btn.textContent = "保存中…";
+  const poll = parseFloat($("cfgPoll").value);
+  const payload = {
+    public_base_url: $("cfgUrl").value.trim(),
+    voice: {
+      poll_interval_sec: isNaN(poll) ? null : poll,
+      hardware: $("cfgHw").value.trim(),
+      hijack_all_play: $("cfgHijack").checked,
+      speak_confirm: $("cfgConfirm").checked,
+    },
+  };
+  try {
+    const res = await api("api/config", { method: "PUT", body: payload });
+    state.cfg = res;
+    renderConfig();
+    note("cfgNote", "");
+    toast("配置已保存", "ok");
+    if (res.restart_required) $("restartBanner").classList.add("show");
+  } catch (e) { note("cfgNote", "保存失败：" + esc(e.message), "err"); }
+  finally { btn.disabled = false; btn.textContent = "保存配置"; }
+}
+
+/* ── Account / login / token ── */
+let loginPollGen = 0;
+function resetLoginUi() {
+  loginPollGen++;
+  $("otpRow").style.display = "none";
+  $("otpCode").value = "";
+  $("otpCode").disabled = false;
+  $("btnOtpSubmit").disabled = false;
+  const btn = $("btnLogin");
+  btn.disabled = false; btn.textContent = "保存并登录";
+}
+async function saveAndLogin() {
+  const btn = $("btnLogin");
+  btn.disabled = true; btn.textContent = "登录中…";
+  $("otpRow").style.display = "none";
+  const mock = $("modeMock").checked;
+  const payload = { mina_mode: mock ? "mock" : "miservice" };
+  const user = $("accUser").value.trim();
+  const pass = $("accPass").value;
+  if (user) payload.xiaomi_user = user;
+  if (pass && pass !== MASK) payload.xiaomi_password = pass;
+  try {
+    state.cfg = await api("api/config", { method: "PUT", body: payload });
+    renderConfig();
+    if (mock) {
+      const res = await api("api/devices");
+      applyDevices(res);
+      note("accNote", "mock 模式无需登录，已列出模拟设备。", "info");
+      resetLoginUi();
+      return;
+    }
+    try {
+      await api("api/login", { method: "POST", body: {} });
+    } catch (e) {
+      if (e.status !== 409) throw e; // 409 = 会话已在跑，直接进入轮询
+    }
+    pollLoginStatus();
+  } catch (e) {
+    note("accNote", "登录失败：" + esc(e.message), "err");
+    resetLoginUi();
+  }
+}
+async function pollLoginStatus() {
+  const gen = ++loginPollGen;
+  while (gen === loginPollGen) {
+    let st;
+    try { st = await api("api/login/status"); }
+    catch { await new Promise((r) => setTimeout(r, 1500)); continue; }
+    if (st.status === "otp_required") {
+      $("otpRow").style.display = "";
+      $("otpHint").textContent = st.otp_method === "Email"
+        ? "验证码已发送到账号绑定邮箱"
+        : "验证码已通过短信发送到账号绑定手机";
+      note("accNote", "小米风控要求验证，请输入验证码（5 分钟内有效）。", "warn");
+    } else if (st.status === "success") {
+      loginPollGen++;
+      try { applyDevices(await api("api/devices")); } catch {}
+      const count = (st.devices || state.devices || []).length;
+      note("accNote", "登录成功，账号下共 " + count + " 台设备，已在「音箱设备」卡片列出。", "info");
+      toast("小米登录成功", "ok");
+      resetLoginUi();
+      return;
+    } else if (st.status === "failed" || st.status === "idle") {
+      loginPollGen++;
+      note("accNote", "登录失败：" + esc(st.error || "未知错误") + "<br>重新点「保存并登录」可重试；若刚才已发过验证码，重试会重新发送一条。", "err");
+      resetLoginUi();
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+async function submitOtp() {
+  const code = $("otpCode").value.trim();
+  if (!code) { toast("请输入验证码", "err"); return; }
+  $("btnOtpSubmit").disabled = true;
+  $("otpCode").disabled = true;
+  try {
+    await api("api/login/otp", { method: "POST", body: { code } });
+    note("accNote", "验证码已提交，正在验证…", "info");
+  } catch (e) {
+    note("accNote", "提交失败：" + esc(e.message), "err");
+    $("btnOtpSubmit").disabled = false;
+    $("otpCode").disabled = false;
+  }
+}
+async function cancelLogin() {
+  try { await api("api/login/cancel", { method: "POST", body: {} }); } catch {}
+  note("accNote", "已取消登录。", "info");
+  resetLoginUi();
+}
+async function clearToken() {
+  try {
+    const res = await api("api/token/clear", { method: "POST", body: {} });
+    note("accNote", res.cleared ? "token 已清除，下次调用将重新登录。" : "没有已保存的 token。", "info");
+    toast(res.cleared ? "token 已清除" : "无 token 可清除", "ok");
+  } catch (e) {
+    note("accNote", "清除失败：" + esc(e.message), "err");
+  }
+}
+
+async function cookieLogin() {
+  const raw = $("cookieInput").value.trim();
+  if (!raw) { toast("请先粘贴凭证", "err"); return; }
+  const btn = $("btnCookieLogin");
+  btn.disabled = true; btn.textContent = "验证中…";
+  try {
+    const res = await api("api/login/cookies", { method: "POST", body: { cookies: raw } });
+    applyDevices({ devices: res.devices, selected_device_id: state.selectedDevice });
+    note("accNote", "Cookies 登录成功，账号下共 " + (res.devices || []).length + " 台设备，已在「音箱设备」卡片列出。", "info");
+    toast("Cookies 登录成功", "ok");
+    $("cookieInput").value = "";
+  } catch (e) {
+    note("accNote", "Cookies 登录失败：" + esc(e.message) + "<br>请确认 userId 与 serviceToken 有效且未过期。", "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "使用 Cookies 登录";
+  }
+}
+
+/* ── Devices ── */
+function applyDevices(res) {
+  state.devices = res.devices || [];
+  state.selectedDevice = res.selected_device_id || null;
+  renderDevices();
+}
+function renderDevices() {
+  const list = $("deviceList");
+  list.innerHTML = state.devices.map((d) => `
+    <div class="row sel-device${d.id === state.selectedDevice ? " selected" : ""}" data-id="${esc(d.id)}" role="button" tabindex="0" aria-label="选择设备 ${esc(d.name)}">
+      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="3"/><circle cx="12" cy="14.5" r="3.5"/></svg>
+      <div class="meta"><div class="t">${esc(d.name)}</div><div class="s">${esc(d.id)}</div></div>
+      <svg class="ic check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+    </div>`).join("");
+  $("deviceEmpty").style.display = state.devices.length ? "none" : "";
+  const sel = state.devices.find((d) => d.id === state.selectedDevice);
+  setBadge("deviceBadge", sel ? sel.name : state.selectedDevice ? state.selectedDevice : "未选设备", sel || state.selectedDevice ? "ok" : "");
+}
+async function refreshDevices(silent) {
+  const btn = $("btnDevRefresh");
+  btn.disabled = true;
+  try {
+    applyDevices(await api("api/devices"));
+    note("devNote", "");
+    if (!silent) toast("设备列表已刷新", "ok");
+  } catch (e) {
+    if (!silent) note("devNote", "获取设备失败：" + esc(e.message), "err");
+    else renderDevices();
+  } finally { btn.disabled = false; }
+}
+async function selectDevice(id) {
+  try {
+    state.cfg = await api("api/config", { method: "PUT", body: { mina_device_id: id } });
+    state.selectedDevice = id;
+    renderDevices();
+    toast("已选中设备并写入配置", "ok");
+  } catch (e) { toast("选择设备失败：" + e.message, "err"); }
+}
+
+/* ── Library ── */
+async function searchTracks(q) {
+  const res = await api("api/tracks" + (q ? "?q=" + encodeURIComponent(q) : ""));
+  state.tracks = res.tracks || [];
+  renderTracks(q);
+  renderUrlExample();
+}
+function renderTracks(q) {
+  const CAP = 300;
+  const shown = state.tracks.slice(0, CAP);
+  $("trackCount").textContent = state.tracks.length
+    ? (q ? "「" + q + "」匹配 " : "共 ") + state.tracks.length + " 首" + (state.tracks.length > CAP ? "，显示前 " + CAP + " 首" : "")
+    : "共 0 首";
+  $("trackEmpty").textContent = q
+    ? "没有匹配「" + q + "」的曲目 — 换个关键词试试"
+    : "曲库为空 — 确认 music_root 已挂载音频文件后重启服务";
+  $("trackList").innerHTML = shown.map((t) => `
+    <div class="row" data-id="${esc(t.id)}">
+      <button class="icon-btn pv-btn act-preview" title="浏览器试听" aria-label="试听 ${esc(t.title)}">
+        <svg class="ic pv-ic" viewBox="0 0 24 24"><path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.6-6.2a1 1 0 0 0 0-1.7L9.6 4.9c-.7-.4-1.6 0-1.6.9z" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <div class="meta"><div class="t">${esc(t.title)}</div><div class="s">${esc(t.id)}${t.size ? " · " + fmtSize(t.size) : ""}</div></div>
+      <button class="btn btn-sm act-push">推送</button>
+    </div>`).join("");
+  $("trackEmpty").style.display = shown.length ? "none" : "";
+}
+async function rescan() {
+  const btn = $("btnRescan");
+  btn.disabled = true;
+  try {
+    await api("api/rescan", { method: "POST", body: {} });
+    toast("已重新扫描曲库", "ok");
+  } catch (e) {
+    toast("服务端暂未提供 rescan 接口：曲库索引在启动时建立，文件变更需重启服务生效。", "info", 7000);
+  } finally {
+    btn.disabled = false;
+    try { await searchTracks($("searchInput").value.trim()); } catch (_) {}
+  }
+}
+function previewToggle(id, btn) {
+  const audio = $("preview");
+  const icon = btn.querySelector(".pv-ic path");
+  document.querySelectorAll(".pv-ic path").forEach((p) => p.setAttribute("d", "M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.6-6.2a1 1 0 0 0 0-1.7L9.6 4.9c-.7-.4-1.6 0-1.6.9z"));
+  if (state.previewId === id && !audio.paused) {
+    audio.pause(); state.previewId = null; return;
+  }
+  audio.src = "media/by-id/" + id;
+  audio.play().then(() => {
+    state.previewId = id;
+    icon.setAttribute("d", "M7 5h3.4v14H7zM13.6 5H17v14h-3.4z");
+  }).catch(() => toast("无法试听该文件", "err"));
+}
+async function pushPlay(id) {
+  const ids = state.tracks.slice(0, 300).map((t) => t.id);
+  try {
+    const res = await api("api/play", { method: "POST", body: { track_id: id, queue_ids: ids.includes(id) ? ids : [id] } });
+    applyQueue(res);
+    toast("已推送到音箱：" + ((res.track && res.track.title) || id), "ok");
+  } catch (e) { toast("推送失败：" + e.message, "err"); }
+}
+
+/* ── Player ── */
+function applyQueue(q) {
+  state.queue = q;
+  const stateMap = { playing: "播放中", paused: "已暂停", stopped: "已停止", idle: "空闲" };
+  const chip = $("playerState");
+  chip.textContent = stateMap[q.state] || q.state || "未知";
+  chip.className = "state-chip" + (q.state === "playing" ? " playing" : "");
+  const cur = q.current;
+  const eq = q.state === "playing" ? '<span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>' : "";
+  $("nowTitle").innerHTML = cur ? eq + esc(cur.title) : "未在播放";
+  const idx = cur ? (q.queue || []).findIndex((t) => t.id === cur.id) : -1;
+  $("nowSub").textContent = cur
+    ? cur.id + (idx >= 0 ? " · 第 " + (idx + 1) + "/" + q.queue.length + " 首" : "") + (q.device ? " · 设备 " + q.device : "")
+    : (q.device ? "设备 " + q.device + " · 从曲库搜索并推送一首歌开始" : "从曲库搜索并推送一首歌开始");
+  $("playIcon").innerHTML = q.state === "playing"
+    ? '<path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/>'
+    : '<path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.6-6.2a1 1 0 0 0 0-1.7L9.6 4.9c-.7-.4-1.6 0-1.6.9z"/>';
+  const rows = (q.queue || []).slice(0, 120);
+  $("queueCount").textContent = q.queue && q.queue.length ? q.queue.length + " 首" : "空";
+  $("queueList").innerHTML = rows.map((t) => `
+    <div class="row${cur && t.id === cur.id ? " current" : ""}" data-id="${esc(t.id)}">
+      <div class="meta"><div class="t">${esc(t.title)}</div><div class="s">${esc(t.id)}</div></div>
+      ${cur && t.id === cur.id ? '<span class="hint">当前</span>' : '<button class="btn btn-sm act-qplay">播放</button>'}
+    </div>`).join("");
+  $("queueEmpty").style.display = rows.length ? "none" : "";
+}
+async function ctl(path, okMsg) {
+  try {
+    applyQueue(await api("api/" + path, { method: "POST", body: {} }));
+    if (okMsg) toast(okMsg, "ok", 2000);
+  } catch (e) {
+    toast((e.status === 409 && /queue is empty/i.test(e.message)) ? "队列为空，请先从曲库推送一首歌" : "操作失败：" + e.message, "err");
+  }
+}
+function playPause() {
+  if (state.queue && state.queue.state === "playing") ctl("pause");
+  else ctl("resume");
+}
+async function setVolume(v) {
+  try {
+    await api("api/volume", { method: "POST", body: { volume: v } });
+    toast("音量已设为 " + v, "ok", 1600);
+    localStorage.setItem("xlm.volume", String(v));
+  } catch (e) { toast("设置音量失败：" + e.message, "err"); }
+}
+
+/* ── Voice ── */
+function applyVoice(v) {
+  state.voice = v;
+  $("voiceSwitch").checked = !!v.enabled;
+  $("voiceStateText").textContent = v.enabled ? (v.running ? "监听中" : "已启用（worker 未运行）") : "已关闭";
+  $("vSource").textContent = v.source || "—";
+  $("vPoll").textContent = rel(v.last_poll_at);
+  $("vEvent").textContent = rel(v.last_event_at);
+  $("vErrs").textContent = String(v.consecutive_errors ?? "—");
+  $("vBackoff").textContent = v.backoff_sec ? v.backoff_sec.toFixed(1) + " s" : "—";
+  $("vHw").textContent = (v.hardware || "未设置") + (v.device_id ? " @ " + v.device_id : "");
+  note("voiceErr", v.last_error ? "最近错误：" + esc(v.last_error) : "", "err");
+  setBadge("voiceBadge",
+    v.enabled ? (v.running ? "语音监听中" : "语音异常") : "语音已关闭",
+    v.enabled ? (v.running ? "ok" : "warn") : "");
+  $("tab-monitor").classList.toggle("has-alert", !!(v.last_error || (v.enabled && !v.running)));
+}
+async function toggleVoice(enabled) {
+  try {
+    applyVoice(await api("api/voice/enable", { method: "POST", body: { enabled } }));
+    toast(enabled ? "语音劫持已启用" : "语音劫持已关闭", "ok");
+  } catch (e) {
+    $("voiceSwitch").checked = !enabled;
+    toast("切换失败：" + e.message + (e.status === 422 ? "（需要先选择设备并填写 voice.hardware）" : ""), "err");
+  }
+}
+async function sendVoice(text) {
+  try {
+    const res = await api("api/voice", { method: "POST", body: { text } });
+    applyQueue(res);
+    if (res.track) toast("指令已执行：正在播放「" + res.track.title + "」", "ok");
+    else toast("指令已执行：" + (res.command || "完成"), "ok");
+    $("voiceText").value = "";
+  } catch (e) { toast("指令失败：" + e.message, "err"); }
+}
+
+/* ── Logs ── */
+function renderLogs(logs) {
+  const items = (logs || []).slice(-80).reverse();
+  $("logList").innerHTML = items.map((l) => {
+    const oc = l.outcome || "—";
+    const cls = oc === "ok" ? "ok" : oc === "error" ? "error" : "other";
+    const bits = [];
+    if (l.raw_query) bits.push("「" + esc(l.raw_query) + "」");
+    if (l.intent) bits.push("→ " + esc(l.intent));
+    if (l.matched_track && l.matched_track.title) bits.push("命中 " + esc(l.matched_track.title));
+    if (l.error) bits.push('<span class="er">' + esc(l.error) + "</span>");
+    return `<div class="log"><span class="tm">${fmtClock(l.timestamp)}</span><span class="oc ${cls}">${esc(oc)}</span><span class="bd">${bits.join(" ") || '<span class="muted">' + esc(l.source || "") + " 轮询</span>"}</span></div>`;
+  }).join("");
+  $("logEmpty").style.display = items.length ? "none" : "";
+}
+
+/* ── Poll loop ── */
+async function tick() {
+  if (document.hidden) return;
+  const results = await Promise.allSettled([
+    api("api/queue"),
+    api("api/voice/status"),
+    api("api/logs?limit=80"),
+  ]);
+  const [q, v, l] = results;
+  if (q.status === "fulfilled") applyQueue(q.value);
+  if (v.status === "fulfilled") applyVoice(v.value);
+  if (l.status === "fulfilled") renderLogs(l.value.logs);
+  setOnline(results.some((r) => r.status === "fulfilled"));
+}
+
+/* ── Wire events ── */
+$("btnSaveCfg").addEventListener("click", saveConfig);
+$("btnUseOrigin").addEventListener("click", () => {
+  if (/^https?:$/.test(location.protocol)) { $("cfgUrl").value = location.origin; renderUrlExample(); }
+  else toast("当前页面不是 http(s) 来源，无法读取地址", "err");
+});
+$("btnLogin").addEventListener("click", saveAndLogin);
+$("btnCookieLogin").addEventListener("click", cookieLogin);
+$("btnClearToken").addEventListener("click", clearToken);
+$("btnOtpSubmit").addEventListener("click", submitOtp);
+$("btnOtpCancel").addEventListener("click", cancelLogin);
+$("otpCode").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submitOtp(); } });
+$("btnDevRefresh").addEventListener("click", () => refreshDevices(false));
+$("deviceList").addEventListener("click", (e) => {
+  const row = e.target.closest(".sel-device");
+  if (row) selectDevice(row.dataset.id);
+});
+$("deviceList").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    const row = e.target.closest(".sel-device");
+    if (row) { e.preventDefault(); selectDevice(row.dataset.id); }
+  }
+});
+$("searchForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  searchTracks($("searchInput").value.trim()).catch((err) => toast("搜索失败：" + err.message, "err"));
+});
+$("btnRescan").addEventListener("click", rescan);
+$("trackList").addEventListener("click", (e) => {
+  const row = e.target.closest(".row");
+  if (!row) return;
+  if (e.target.closest(".act-preview")) previewToggle(row.dataset.id, e.target.closest(".act-preview"));
+  else if (e.target.closest(".act-push")) pushPlay(row.dataset.id);
+});
+$("queueList").addEventListener("click", (e) => {
+  const row = e.target.closest(".row");
+  if (row && e.target.closest(".act-qplay")) {
+    const ids = (state.queue.queue || []).map((t) => t.id);
+    api("api/play", { method: "POST", body: { track_id: row.dataset.id, queue_ids: ids } })
+      .then(applyQueue).catch((err) => toast("播放失败：" + err.message, "err"));
+  }
+});
+$("btnPlay").addEventListener("click", playPause);
+$("btnPrev").addEventListener("click", () => ctl("previous"));
+$("btnNext").addEventListener("click", () => ctl("next"));
+$("btnStop").addEventListener("click", () => ctl("stop"));
+$("vol").addEventListener("input", () => { $("volVal").textContent = $("vol").value; });
+$("vol").addEventListener("change", () => setVolume(parseInt($("vol").value, 10)));
+$("voiceSwitch").addEventListener("change", (e) => toggleVoice(e.target.checked));
+$("voiceForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("voiceText").value.trim();
+  if (text) sendVoice(text);
+});
+$("btnCopyUrl").addEventListener("click", () => {
+  copyText($("urlExample").textContent).then(() => toast("已复制示例 URL", "ok", 2000));
+});
+$("restartDismiss").addEventListener("click", () => $("restartBanner").classList.remove("show"));
+$("preview").addEventListener("ended", () => {
+  state.previewId = null;
+  document.querySelectorAll(".pv-ic path").forEach((p) => p.setAttribute("d", "M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.6-6.2a1 1 0 0 0 0-1.7L9.6 4.9c-.7-.4-1.6 0-1.6.9z"));
+});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
+
+/* ── Tabs ── */
+const TABS = ["play", "session", "monitor", "config"];
+function setTab(name) {
+  if (!TABS.includes(name)) name = "play";
+  $("mainLayout").dataset.tab = name;
+  TABS.forEach((t) => {
+    const btn = $("tab-" + t);
+    if (t === name) btn.setAttribute("aria-current", "true");
+    else btn.removeAttribute("aria-current");
+  });
+  localStorage.setItem("xlm.tab", name);
+}
+const tabbar = document.querySelector(".tabbar");
+tabbar.addEventListener("click", (e) => {
+  const btn = e.target.closest(".tab");
+  if (btn) setTab(btn.id.slice(4));
+});
+tabbar.addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+  const idx = TABS.indexOf($("mainLayout").dataset.tab);
+  setTab(TABS[(idx + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]);
+  $("tab-" + $("mainLayout").dataset.tab).focus();
+});
+
+/* ── Init ── */
+(function init() {
+  setTab(localStorage.getItem("xlm.tab") || "play");
+  const savedVol = parseInt(localStorage.getItem("xlm.volume") || "30", 10);
+  $("vol").value = isNaN(savedVol) ? 30 : savedVol;
+  $("volVal").textContent = $("vol").value;
+  api("healthz").then(() => setOnline(true)).catch(() => setOnline(false));
+  loadConfig().catch(() => {});
+  refreshDevices(true);
+  searchTracks("").catch(() => {});
+  tick();
+  setInterval(tick, 4000);
+})();
+</script>
+</body>
+</html>

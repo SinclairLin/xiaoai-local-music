@@ -4,24 +4,26 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 
 from .config import ConfigError, Settings
+from .cookie_login import CookieParseError, build_token, parse_credentials, write_token_file
 from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient
-from .models import ConfigUpdate, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
+from .models import ConfigUpdate, CookieLoginRequest, OtpSubmitRequest, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
 from .service import PlaybackStateError, TrackNotFoundError
 from .voice import VoiceIntent, parse_command
 
 router = APIRouter()
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-@router.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return """<!doctype html>
-<html lang="zh-CN"><meta charset="utf-8"><title>小爱本地音乐</title>
-<body><h1>小爱本地音乐</h1><p>服务已启动。使用 <code>/api/tracks</code> 查看曲目。</p></body></html>"""
+
+@router.get("/", response_class=FileResponse)
+def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
 
 
 @router.get("/healthz")
@@ -188,6 +190,14 @@ async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, ob
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     request.app.state.settings = updated
     request.app.state.service.set_device_id(updated.mina_device_id)
+    manager = getattr(request.app.state, "login_manager", None)
+    if manager is not None and (
+        updated.mina_mode != old.mina_mode
+        or updated.xiaomi_user != old.xiaomi_user
+        or updated.xiaomi_password != old.xiaomi_password
+    ):
+        # 模式或凭据变了，进行中的登录会话写回的 token 已无意义，直接作废。
+        manager.cancel()
     client = request.app.state.service.mina_client
     if updated.mina_mode != old.mina_mode:
         client = (
@@ -226,6 +236,95 @@ async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, ob
         for key in ("music_root", "host", "port", "public_base_url")
     )
     return response
+
+
+@router.post("/api/login")
+def login_start(request: Request) -> dict[str, object]:
+    manager = request.app.state.login_manager
+    settings: Settings = request.app.state.settings
+    client = request.app.state.service.mina_client
+    if settings.mina_mode == "mock":
+        if not manager.start_mock(client.list_devices()):
+            raise HTTPException(status_code=409, detail="已有登录会话进行中")
+        return manager.status()
+    if not settings.xiaomi_user or not settings.xiaomi_password:
+        raise HTTPException(status_code=422, detail="请先填写并保存小米账号密码")
+    token_path = getattr(client, "token_path", Path(settings.config_dir) / ".mi.token")
+    if not manager.start(settings.xiaomi_user, settings.xiaomi_password, token_path):
+        raise HTTPException(status_code=409, detail="已有登录会话进行中")
+    return manager.status()
+
+
+@router.get("/api/login/status")
+def login_status(request: Request) -> dict[str, object]:
+    return request.app.state.login_manager.status()
+
+
+@router.post("/api/login/otp")
+def login_otp(payload: OtpSubmitRequest, request: Request) -> dict[str, object]:
+    code = payload.code.strip()
+    if not code:
+        # 空 code 会让 OTP 回调直接超时失败，拒绝在路由层而不消耗会话。
+        raise HTTPException(status_code=422, detail="验证码不能为空")
+    manager = request.app.state.login_manager
+    if not manager.submit_otp(code):
+        raise HTTPException(status_code=409, detail="当前没有等待验证码的登录会话")
+    return manager.status()
+
+
+@router.post("/api/login/cookies")
+def login_cookies(payload: CookieLoginRequest, request: Request) -> dict[str, object]:
+    manager = request.app.state.login_manager
+    if manager.is_active():
+        raise HTTPException(status_code=409, detail="已有登录会话进行中，请先取消")
+    settings: Settings = request.app.state.settings
+    client = request.app.state.service.mina_client
+    try:
+        fields = parse_credentials(payload.cookies or "") if payload.cookies else {}
+        explicit = {
+            "userId": payload.user_id,
+            "serviceToken": payload.service_token,
+            "ssecurity": payload.ssecurity,
+            "passToken": payload.pass_token,
+            "deviceId": payload.device_id,
+        }
+        fields.update({key: value for key, value in explicit.items() if value})
+        token = build_token(fields)
+    except CookieParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    token_path = Path(getattr(client, "token_path", Path(settings.config_dir) / ".mi.token"))
+    backup = token_path.read_bytes() if token_path.is_file() else None
+    write_token_file(token_path, token)
+    try:
+        listed = client.list_devices()
+    except MinaClientError as exc:
+        # 新凭证不可用则回滚，避免把原本还能用的 token 覆盖掉。
+        if backup is not None:
+            token_path.write_bytes(backup)
+            token_path.chmod(0o600)
+        else:
+            token_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=401, detail=f"Cookies 无效或已过期：{exc}") from exc
+    return {
+        "status": "success",
+        "devices": [{"id": item.id, "name": item.name} for item in listed],
+    }
+
+
+@router.post("/api/login/cancel")
+def login_cancel(request: Request) -> dict[str, object]:
+    manager = request.app.state.login_manager
+    manager.cancel()
+    return manager.status()
+
+
+@router.post("/api/token/clear")
+def token_clear(request: Request) -> dict[str, object]:
+    settings: Settings = request.app.state.settings
+    token_path = Path(settings.config_dir) / ".mi.token"
+    cleared = token_path.is_file()
+    token_path.unlink(missing_ok=True)
+    return {"cleared": cleared}
 
 
 @router.get("/api/devices")

@@ -8,6 +8,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from .config import Settings
+from .login_session import LoginSessionManager
 from .mina_client import MinaMiserviceClient, MockMinaClient
 from .routes import router
 from .service import MusicService
@@ -64,6 +65,7 @@ def create_app(settings: Settings | None = None, service: MusicService | None = 
     application.state.mina_client = mina_client
     application.state.voice_log = voice_worker.log
     application.state.voice_worker = voice_worker
+    application.state.login_manager = LoginSessionManager()
     application.include_router(router)
     return application
 
