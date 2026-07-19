@@ -460,6 +460,9 @@ def test_login_otp_http_flow(tmp_path: Path) -> None:
         status = _poll_login(client, "otp_required")
         assert status["otp_method"] == "Phone"
         assert client.post("/api/login").status_code == 409
+        # 纯空白验证码在路由层被拒绝，不消耗等待中的会话
+        assert client.post("/api/login/otp", json={"code": "   "}).status_code == 422
+        assert client.get("/api/login/status").json()["status"] == "otp_required"
         assert client.post("/api/login/otp", json={"code": "654321"}).status_code == 200
         status = _poll_login(client, "success")
         assert status["devices"] == [{"id": "d1", "name": "客厅音箱"}]

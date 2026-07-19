@@ -262,8 +262,12 @@ def login_status(request: Request) -> dict[str, object]:
 
 @router.post("/api/login/otp")
 def login_otp(payload: OtpSubmitRequest, request: Request) -> dict[str, object]:
+    code = payload.code.strip()
+    if not code:
+        # 空 code 会让 OTP 回调直接超时失败，拒绝在路由层而不消耗会话。
+        raise HTTPException(status_code=422, detail="验证码不能为空")
     manager = request.app.state.login_manager
-    if not manager.submit_otp(payload.code.strip()):
+    if not manager.submit_otp(code):
         raise HTTPException(status_code=409, detail="当前没有等待验证码的登录会话")
     return manager.status()
 

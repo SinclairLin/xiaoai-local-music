@@ -1,3 +1,5 @@
+import asyncio
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -190,3 +192,83 @@ def test_cancel_is_noop_on_terminal_state() -> None:
     manager = LoginSessionManager()
     manager.cancel()
     assert manager.status()["status"] == "idle"
+
+
+def _wait_until_gone(path: Path, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not path.exists()
+
+
+def test_success_promotes_temp_token_to_real_path(tmp_path: Path) -> None:
+    real = tmp_path / ".mi.token"
+    seen: dict[str, Path] = {}
+
+    @asynccontextmanager
+    async def factory(username, password, token_path, otp_callback):
+        seen["store"] = Path(token_path)
+
+        class Account:
+            async def login(self, sid: str) -> bool:
+                Path(token_path).write_text('{"userId": 1}', encoding="utf-8")
+                return True
+
+        yield Account()
+
+    manager = LoginSessionManager(account_factory=factory, otp_timeout_sec=1.0, total_timeout_sec=5.0)
+    assert manager.start("user", "password", real)
+    wait_for_state(manager, "success")
+
+    assert seen["store"] != real  # 登录写的是会话临时文件
+    assert '"userId": 1' in real.read_text()  # 成功后晋升为正式 token
+    _wait_until_gone(seen["store"])
+
+
+def test_failed_login_keeps_existing_real_token(tmp_path: Path) -> None:
+    real = tmp_path / ".mi.token"
+    real.write_text('{"userId": 9, "micoapi": ["", "good"]}', encoding="utf-8")
+
+    @asynccontextmanager
+    async def factory(username, password, token_path, otp_callback):
+        class Account:
+            _login_error = "Login auth failed"
+
+            async def login(self, sid: str) -> bool:
+                # miservice 失败路径会删除 token 存储文件
+                Path(token_path).unlink(missing_ok=True)
+                return False
+
+        yield Account()
+
+    manager = LoginSessionManager(account_factory=factory, otp_timeout_sec=1.0, total_timeout_sec=5.0)
+    manager.start("user", "bad-password", real)
+    wait_for_state(manager, "failed")
+    assert '"good"' in real.read_text()
+
+
+def test_cancelled_session_discards_login_token(tmp_path: Path) -> None:
+    real = tmp_path / ".mi.token"
+    login_done = threading.Event()
+
+    @asynccontextmanager
+    async def factory(username, password, token_path, otp_callback):
+        class Account:
+            async def login(self, sid: str) -> bool:
+                await asyncio.sleep(0.3)  # 给测试留出 cancel 窗口
+                Path(token_path).write_text('{"userId": 1}', encoding="utf-8")
+                login_done.set()
+                return True
+
+        yield Account()
+
+    manager = LoginSessionManager(account_factory=factory, otp_timeout_sec=1.0, total_timeout_sec=5.0)
+    manager.start("user", "password", real)
+    manager.cancel()
+    assert login_done.wait(3.0)
+
+    assert manager.status()["status"] == "failed"
+    # 临时文件清理发生在晋升决策之后，等它消失再断言正式 token 未被写入。
+    for leftover in tmp_path.glob(".mi.token.login*"):
+        _wait_until_gone(leftover)
+    assert not real.exists()  # 被取消的会话不得晋升 token

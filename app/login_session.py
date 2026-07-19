@@ -2,16 +2,21 @@
 
 The manager runs a single login attempt on a daemon thread (same
 ``asyncio.run`` bridging as ``MinaMiserviceClient._run``). It deliberately
-shares nothing with the client except the token file: once the login
-coroutine persists ``{config_dir}/.mi.token``, every later client call reuses
-it via ``MiTokenStore``. While a session is mid-login, a concurrent client
-failure may delete the token file; callers accept that residual race instead
-of holding the client lock for the whole OTP wait.
+shares nothing with the client except the token file: the login coroutine
+writes its token to a per-session temp file, and only a still-current
+session atomically promotes it to ``{config_dir}/.mi.token`` — a cancelled
+or superseded attempt cannot resurrect an outdated token, and a failed
+attempt cannot delete an existing good one (miservice removes its token
+store on login failure). Every later client call reuses the promoted token
+via ``MiTokenStore``. A concurrent client-side login failure may still
+delete the promoted file; callers accept that residual race instead of
+holding the client lock for the whole OTP wait.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -111,9 +116,13 @@ class LoginSessionManager:
             holder: dict[str, str | None] = {"code": None}
             self._otp_event = event
             self._otp_holder = holder
+            real_path = Path(token_path)
+            # token 先落到会话独占的临时文件：miservice 登录失败会删除 token
+            # 存储文件、成功则无条件写入，都不能让它直接作用于正式 token。
+            temp_path = real_path.with_name(f"{real_path.name}.login{generation}")
             thread = threading.Thread(
                 target=self._run_login,
-                args=(generation, username, password, Path(token_path), event, holder),
+                args=(generation, username, password, real_path, temp_path, event, holder),
                 daemon=True,
                 name="mi-login",
             )
@@ -153,31 +162,47 @@ class LoginSessionManager:
             self._otp_holder["code"] = None
             self._otp_event.set()
 
-    def _run_login(self, generation: int, username: str, password: str, token_path: Path, event: threading.Event, holder: dict[str, str | None]) -> None:
+    def _run_login(self, generation: int, username: str, password: str, token_path: Path, temp_path: Path, event: threading.Event, holder: dict[str, str | None]) -> None:
         try:
             asyncio.run(
                 asyncio.wait_for(
-                    self._login_coro(generation, username, password, token_path, event, holder),
+                    self._login_coro(generation, username, password, token_path, temp_path, event, holder),
                     self.total_timeout_sec,
                 )
             )
         except Exception as exc:
             self._finish(generation, LoginState.FAILED, error=str(exc) or type(exc).__name__)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
-    async def _login_coro(self, generation: int, username: str, password: str, token_path: Path, event: threading.Event, holder: dict[str, str | None]) -> None:
+    async def _login_coro(self, generation: int, username: str, password: str, token_path: Path, temp_path: Path, event: threading.Event, holder: dict[str, str | None]) -> None:
         otp_callback = self._make_otp_callback(generation, event, holder)
-        async with self._account_factory(username, password, token_path, otp_callback) as account:
+        async with self._account_factory(username, password, temp_path, otp_callback) as account:
             if not await account.login("micoapi"):
                 error = getattr(account, "_login_error", None) or "登录失败"
                 self._finish(generation, LoginState.FAILED, error=str(error))
+                return
+            if not self._promote_token(generation, temp_path, token_path):
+                # 会话已被取消或顶替，丢弃这次登录产出的 token。
                 return
             try:
                 raw_devices = await MiNAService(account).device_list()
                 devices = [{"id": item.id, "name": item.name} for item in parse_device_list(raw_devices)]
             except Exception:
-                # token 已写入，登录本身成功；设备列表可稍后经 /api/devices 重取。
+                # token 已晋升，登录本身成功；设备列表可稍后经 /api/devices 重取。
                 devices = []
             self._finish(generation, LoginState.SUCCESS, devices=devices)
+
+    def _promote_token(self, generation: int, temp_path: Path, token_path: Path) -> bool:
+        with self._lock:
+            if generation != self._generation:
+                return False
+            try:
+                os.replace(temp_path, token_path)
+            except FileNotFoundError:
+                # 登录桩可能不落盘；没有临时文件就无需搬运。
+                pass
+        return True
 
     def _make_otp_callback(self, generation: int, event: threading.Event, holder: dict[str, str | None]) -> OtpCallback:
         async def callback(otp_method: str) -> str:

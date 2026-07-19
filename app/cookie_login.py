@@ -13,6 +13,7 @@ calls; ``ssecurity``/``passToken``/``deviceId`` are kept when provided.
 from __future__ import annotations
 
 import json
+import os
 import random
 import string
 from pathlib import Path
@@ -110,5 +111,9 @@ def build_token(fields: dict[str, str]) -> dict[str, Any]:
 def write_token_file(token_path: Path, token: dict[str, Any]) -> None:
     """Persist the token with the same layout and permissions as MiTokenStore."""
     token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text(json.dumps(token, indent=2), encoding="utf-8")
+    # 直接以 600 创建，避免「先写后 chmod」的间隙暴露 serviceToken。
+    fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(token, indent=2))
+    # O_CREAT 的 mode 对已存在文件不生效，统一收紧一次。
     token_path.chmod(0o600)
