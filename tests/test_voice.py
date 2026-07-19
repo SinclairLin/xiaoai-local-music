@@ -65,3 +65,8 @@ def test_parse_all_voice_intents(text: str, intent: VoiceIntent) -> None:
     parsed = parse_command(text)
     assert parsed is not None
     assert parsed.intent is intent
+
+
+@pytest.mark.parametrize("text", ["播放", "播放本地", "放一首", "我想听", "小爱同学请播放"])
+def test_bare_play_prefixes_without_title_are_rejected(text: str) -> None:
+    assert parse_command(text) is None

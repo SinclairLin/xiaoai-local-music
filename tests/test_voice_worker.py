@@ -78,3 +78,21 @@ def test_parser_supports_all_control_intents():
     assert parse_command("请继续").intent is VoiceIntent.RESUME
     assert parse_command("切歌").intent is VoiceIntent.NEXT
     assert parse_command("上一曲").intent is VoiceIntent.PREVIOUS
+
+
+def test_worker_restart_lifecycle(tmp_path):
+    service, mina = make_service(tmp_path)
+    worker = VoiceWorker(FakeSource([]), service, mina_client=mina, device_id="d1", poll_interval_sec=0.01)
+
+    async def run():
+        await worker.start()
+        await worker.stop()
+        await worker.start()
+        restarted = await worker.status()
+        await worker.stop()
+        stopped = await worker.status()
+        return restarted, stopped
+
+    restarted, stopped = asyncio.run(run())
+    assert restarted["running"] is True
+    assert stopped["running"] is False

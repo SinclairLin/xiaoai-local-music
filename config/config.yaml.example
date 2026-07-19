@@ -8,15 +8,10 @@ public_base_url: "http://nas-host:8123"
 music_root: "/music"
 host: "0.0.0.0"
 port: 8123
+# hardware 为音箱型号（小米音箱背面标签/米家 App 可查），如 LX06、LX04、L05B
 voice:
   enabled: false
   poll_interval_sec: 1.5
   hijack_all_play: true
   speak_confirm: true
   hardware: "LX06"
-voice:
-  enabled: false
-  poll: 1.5
-  hijack: true
-  speak: true
-  hardware: "auto"

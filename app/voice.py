@@ -56,7 +56,10 @@ def parse_command(text: str | None) -> ParsedIntent | None:
             query = normalized[len(prefix) :]
             if query.startswith("本地"):
                 query = query[2:]
-            return ParsedIntent(VoiceIntent.PLAY, query or None, normalized)
+            # A bare prefix like "播放" must not turn into a play-everything.
+            if not query:
+                return None
+            return ParsedIntent(VoiceIntent.PLAY, query, normalized)
     for intent, phrases in _CONTROL_PATTERNS:
         if normalized in phrases or any(normalized.startswith(phrase) for phrase in phrases):
             return ParsedIntent(intent, raw=normalized)

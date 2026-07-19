@@ -120,9 +120,9 @@ async def voice_enable(payload: VoiceEnableRequest, request: Request) -> dict[st
                 await asyncio.to_thread(validator, settings.mina_device_id, settings.voice.hardware)
             except MinaClientError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
-    updated_voice = replace(settings.voice, enabled=payload.enabled)
-    updated = replace(settings, voice=updated_voice)
     try:
+        updated_voice = replace(settings.voice, enabled=payload.enabled)
+        updated = replace(settings, voice=updated_voice)
         updated.save()
     except ConfigError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -159,29 +159,29 @@ def get_config(request: Request) -> dict[str, object]:
 async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, object]:
     old: Settings = request.app.state.settings
     password = old.xiaomi_password if payload.xiaomi_password in (None, "********") else payload.xiaomi_password
-    voice = old.voice
-    if payload.voice is not None:
-        voice = replace(
-            voice,
-            enabled=payload.voice.enabled if payload.voice.enabled is not None else voice.enabled,
-            poll_interval_sec=payload.voice.poll_interval_sec if payload.voice.poll_interval_sec is not None else voice.poll_interval_sec,
-            hijack_all_play=payload.voice.hijack_all_play if payload.voice.hijack_all_play is not None else voice.hijack_all_play,
-            speak_confirm=payload.voice.speak_confirm if payload.voice.speak_confirm is not None else voice.speak_confirm,
-            hardware=payload.voice.hardware if payload.voice.hardware is not None else voice.hardware,
-        )
-    values = {
-        "music_root": payload.music_root if payload.music_root is not None else old.music_root,
-        "config_dir": old.config_dir,
-        "host": payload.host if payload.host is not None else old.host,
-        "port": payload.port if payload.port is not None else old.port,
-        "public_base_url": payload.public_base_url if payload.public_base_url is not None else old.public_base_url,
-        "xiaomi_user": payload.xiaomi_user if payload.xiaomi_user is not None else old.xiaomi_user,
-        "xiaomi_password": password,
-        "mina_mode": payload.mina_mode if payload.mina_mode is not None else old.mina_mode,
-        "mina_device_id": payload.mina_device_id if payload.mina_device_id is not None else old.mina_device_id,
-        "voice": voice,
-    }
     try:
+        voice = old.voice
+        if payload.voice is not None:
+            voice = replace(
+                voice,
+                enabled=payload.voice.enabled if payload.voice.enabled is not None else voice.enabled,
+                poll_interval_sec=payload.voice.poll_interval_sec if payload.voice.poll_interval_sec is not None else voice.poll_interval_sec,
+                hijack_all_play=payload.voice.hijack_all_play if payload.voice.hijack_all_play is not None else voice.hijack_all_play,
+                speak_confirm=payload.voice.speak_confirm if payload.voice.speak_confirm is not None else voice.speak_confirm,
+                hardware=payload.voice.hardware if payload.voice.hardware is not None else voice.hardware,
+            )
+        values = {
+            "music_root": payload.music_root if payload.music_root is not None else old.music_root,
+            "config_dir": old.config_dir,
+            "host": payload.host if payload.host is not None else old.host,
+            "port": payload.port if payload.port is not None else old.port,
+            "public_base_url": payload.public_base_url if payload.public_base_url is not None else old.public_base_url,
+            "xiaomi_user": payload.xiaomi_user if payload.xiaomi_user is not None else old.xiaomi_user,
+            "xiaomi_password": password,
+            "mina_mode": payload.mina_mode if payload.mina_mode is not None else old.mina_mode,
+            "mina_device_id": payload.mina_device_id if payload.mina_device_id is not None else old.mina_device_id,
+            "voice": voice,
+        }
         updated = Settings(**values)
         updated.save()
     except ConfigError as exc:

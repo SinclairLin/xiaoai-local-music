@@ -266,3 +266,18 @@ def test_voice_nested_config_and_environment_overrides(monkeypatch, tmp_path) ->
 def test_enabled_voice_requires_hardware() -> None:
     with pytest.raises(ConfigError, match="voice.hardware"):
         Settings(public_base_url="http://testserver", voice={"enabled": True})
+
+
+def test_blank_voice_environment_values_are_ignored(monkeypatch, tmp_path) -> None:
+    clear_config_env(monkeypatch)
+    (tmp_path / "config.yaml").write_text(
+        "public_base_url: http://testserver\nvoice:\n  enabled: false\n  hardware: LX06\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("VOICE_ENABLED", "")
+
+    settings = Settings.from_env()
+
+    assert settings.voice.enabled is False
+    assert settings.voice.hardware == "LX06"

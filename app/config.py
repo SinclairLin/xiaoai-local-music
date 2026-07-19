@@ -213,12 +213,18 @@ class Settings:
         mina_device_id = _optional_string_value(data, "mina_device_id")
         public_base_url = data.get("public_base_url")
         voice_data = data.get("voice", {})
-        if "VOICE_ENABLED" in os.environ:
-            voice_data = dict(voice_data) if isinstance(voice_data, dict) else voice_data
-            if isinstance(voice_data, dict): voice_data["enabled"] = os.environ["VOICE_ENABLED"]
         if isinstance(voice_data, dict):
-            for key, env_name in (("poll_interval_sec", "VOICE_POLL_INTERVAL_SEC"), ("hijack_all_play", "VOICE_HIJACK_ALL_PLAY"), ("speak_confirm", "VOICE_SPEAK_CONFIRM"), ("hardware", "VOICE_HARDWARE")):
-                if _non_empty_env(env_name) is not None: voice_data[key] = os.environ[env_name]
+            voice_data = dict(voice_data)
+            for key, env_name in (
+                ("enabled", "VOICE_ENABLED"),
+                ("poll_interval_sec", "VOICE_POLL_INTERVAL_SEC"),
+                ("hijack_all_play", "VOICE_HIJACK_ALL_PLAY"),
+                ("speak_confirm", "VOICE_SPEAK_CONFIRM"),
+                ("hardware", "VOICE_HARDWARE"),
+            ):
+                value = _non_empty_env(env_name)
+                if value is not None:
+                    voice_data[key] = value
 
         music_root = _non_empty_env("MUSIC_ROOT") or _non_empty_env("MUSIC_DIR") or music_root
         host = _non_empty_env("HOST") or host

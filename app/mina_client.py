@@ -36,6 +36,11 @@ class MinaDevice:
     name: str
 
 
+# Conversation polls run under the client-wide _run lock; without an explicit
+# bound a hung upstream (aiohttp default total=300s) stalls every Mina call.
+_CONVERSATION_TIMEOUT_SEC = 10.0
+
+
 class MinaClient(Protocol):
     def login(self) -> str: ...
     def list_devices(self) -> list[MinaDevice]: ...
@@ -181,42 +186,48 @@ class MinaMiserviceClient:
         if not user_id or not service_token:
             raise MinaAuthError("Mina micoapi credentials are unavailable")
         timestamp = int(time.time() * 1000)
+        # limit=2 mirrors upstream clients; more than two commands within one
+        # poll window drop the oldest ones.
         url = (
             "https://userprofile.mina.mi.com/device_profile/v2/conversation"
             f"?source=dialogu&hardware={hardware}&timestamp={timestamp}&limit=2"
         )
         cookies = {"userId": user_id, "serviceToken": service_token, "channel": "MI_APP_STORE", "deviceId": device_id}
         headers = {"User-Agent": getattr(account, "now_ua", "")}
+
+        async def fetch_once() -> tuple[int, Any]:
+            async with account._session.get(url, cookies=cookies, headers=headers) as response:
+                return response.status, await response.json(content_type=None)
+
         refreshed = False
         while True:
-            async with account._session.get(url, cookies=cookies, headers=headers) as response:
-                body = await response.json(content_type=None)
-                code = body.get("code") if isinstance(body, dict) else None
-                message = str(body.get("message", "")) if isinstance(body, dict) else ""
-                if response.status == 401 or code in {401, 2} or "auth" in message.lower():
-                    if refreshed or not await self._invalidate_and_login(account):
-                        raise MinaAuthError("Mina conversation authentication expired")
-                    refreshed = True
-                    token = account.token or {}
-                    service_token = self._service_token(token)
-                    cookies["userId"] = str(token.get("userId", user_id))
-                    cookies["serviceToken"] = service_token
-                    continue
-                if response.status != 200 or code != 0:
-                    raise MinaUpstreamError(f"Mina conversation request failed: HTTP {response.status}, code={code}")
-                raw_data = body.get("data")
-                data = json.loads(raw_data) if isinstance(raw_data, str) else (raw_data or {})
-                records = data.get("records", []) if isinstance(data, dict) else []
-                return [
-                    {
-                        "timestamp": int(record.get("time") or 0),
-                        "query": str(record.get("query") or ""),
-                        "request_id": str(record.get("requestId") or "") or None,
-                        "source": "conversation",
-                    }
-                    for record in records
-                    if int(record.get("time") or 0) > after_timestamp and record.get("query")
-                ]
+            status, body = await asyncio.wait_for(fetch_once(), timeout=_CONVERSATION_TIMEOUT_SEC)
+            code = body.get("code") if isinstance(body, dict) else None
+            message = str(body.get("message", "")) if isinstance(body, dict) else ""
+            if status == 401 or code in {401, 2} or "auth" in message.lower():
+                if refreshed or not await self._invalidate_and_login(account):
+                    raise MinaAuthError("Mina conversation authentication expired")
+                refreshed = True
+                token = account.token or {}
+                service_token = self._service_token(token)
+                cookies["userId"] = str(token.get("userId", user_id))
+                cookies["serviceToken"] = service_token
+                continue
+            if status != 200 or code != 0:
+                raise MinaUpstreamError(f"Mina conversation request failed: HTTP {status}, code={code}")
+            raw_data = body.get("data")
+            data = json.loads(raw_data) if isinstance(raw_data, str) else (raw_data or {})
+            records = data.get("records", []) if isinstance(data, dict) else []
+            return [
+                {
+                    "timestamp": int(record.get("time") or 0),
+                    "query": str(record.get("query") or ""),
+                    "request_id": str(record.get("requestId") or "") or None,
+                    "source": "conversation",
+                }
+                for record in records
+                if int(record.get("time") or 0) > after_timestamp and record.get("query")
+            ]
 
     async def _ubus_events(self, service: MiNAService, device_id: str, after_timestamp: int) -> list[dict[str, Any]]:
         messages = await service.get_latest_ask(device_id)
@@ -233,6 +244,10 @@ class MinaMiserviceClient:
         async def operation(service: MiNAService) -> list[dict[str, Any]]:
             try:
                 return await self._conversation_events(service, device_id, hardware, after_timestamp)
+            except MinaAuthError:
+                # ubus needs the same micoapi credentials; surface the auth
+                # failure instead of hiding it behind a doomed fallback.
+                raise
             except Exception:
                 return await self._ubus_events(service, device_id, after_timestamp)
 

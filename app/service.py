@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,7 +104,9 @@ class MusicService:
                 track=track,
                 file_path=resolved_path,
                 media_type=MEDIA_TYPES[suffix],
-                search_text=f"{path.stem} {relative}".casefold(),
+                # Whitespace-insensitive haystack: the voice parser strips all
+                # spaces from queries while filenames usually keep them.
+                search_text=re.sub(r"\s+", "", f"{path.stem} {relative}").casefold(),
             )
             entries.append(entry)
             entries_by_id[track_id] = entry
@@ -123,7 +126,7 @@ class MusicService:
         entries = self._snapshot()
         if not query:
             return [entry.track for entry in entries]
-        needle = query.casefold()
+        needle = re.sub(r"\s+", "", query).casefold()
         return [entry.track for entry in entries if needle in entry.search_text]
 
     def get_track(self, track_id: str) -> Track | None:

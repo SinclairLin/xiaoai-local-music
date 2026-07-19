@@ -87,8 +87,15 @@ class VoiceWorker:
 
     async def start(self) -> None:
         async with self._lifecycle_lock:
-            if self._task and not self._task.done():
+            task = self._task
+            if task and not task.done() and not self._stop.is_set():
                 return
+            if task:
+                # A concurrent stop() may still be draining the old task.
+                self._stop.set()
+                await task
+                if self._task is task:
+                    self._task = None
             self._stop = asyncio.Event()
             self._baseline_pending = True
             self._task = asyncio.create_task(self._run(), name="voice-worker")
@@ -103,7 +110,9 @@ class VoiceWorker:
             await task
         finally:
             async with self._lifecycle_lock:
-                self._task = None
+                # A concurrent start() may already own a fresh task.
+                if self._task is task:
+                    self._task = None
 
     async def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
@@ -205,8 +214,10 @@ class VoiceWorker:
                 self._errors = 0
                 self._last_error = None
                 self._backoff_sec = self.poll_interval_sec
-                await self._wait(delay)
+                # Reset before sleeping so recovery does not sit out one more
+                # stale backoff period.
                 delay = self.poll_interval_sec
+                await self._wait(delay)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
