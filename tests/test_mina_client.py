@@ -50,6 +50,14 @@ class FakeMiNAService:
     async def player_set_volume(self, deviceId: str, volume: int) -> Any:
         return await self._record("player_set_volume", deviceId, volume)
 
+    async def get_latest_ask(self, deviceId: str) -> Any:
+        self.calls.append(("get_latest_ask", (deviceId,)))
+        return [{
+            "request_id": "r1",
+            "timestamp_ms": 123,
+            "response": {"answer": [{"question": "播放稻香"}]},
+        }]
+
 
 def make_client(tmp_path: Path, service: FakeMiNAService, username: str | None = "user", password: str | None = "password") -> MinaMiserviceClient:
     @asynccontextmanager
@@ -174,3 +182,22 @@ def test_run_with_token_file_but_no_credentials_proceeds(tmp_path: Path) -> None
     client = make_client(tmp_path, FakeMiNAService(devices=[]), username=None, password=None)
 
     assert client.list_devices() == []
+
+
+def test_voice_events_fall_back_to_ubus_shape(tmp_path: Path) -> None:
+    service = FakeMiNAService(devices=[])
+    client = make_client(tmp_path, service)
+
+    events = client.fetch_voice_events("d1", "LX06", 0)
+
+    assert events == [{"timestamp": 123, "query": "播放稻香", "request_id": "r1", "source": "ubus"}]
+    assert ("get_latest_ask", ("d1",)) in service.calls
+
+
+def test_voice_device_validation_checks_hardware(tmp_path: Path) -> None:
+    service = FakeMiNAService(devices=[{"deviceID": "d1", "hardware": "LX06"}])
+    client = make_client(tmp_path, service)
+
+    client.validate_voice_device("d1", "LX06")
+    with pytest.raises(Exception, match="hardware mismatch"):
+        client.validate_voice_device("d1", "LX04")

@@ -16,6 +16,49 @@ class ConfigError(ValueError):
     """Raised when the persisted or environment configuration is invalid."""
 
 
+@dataclass(frozen=True)
+class VoiceSettings:
+    enabled: bool = False
+    poll_interval_sec: float = 1.5
+    hijack_all_play: bool = True
+    speak_confirm: bool = True
+    hardware: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool) or not isinstance(self.hijack_all_play, bool) or not isinstance(self.speak_confirm, bool):
+            raise ConfigError("voice enabled, hijack_all_play and speak_confirm must be booleans")
+        if isinstance(self.poll_interval_sec, bool) or not isinstance(self.poll_interval_sec, (int, float)) or self.poll_interval_sec <= 0:
+            raise ConfigError("voice.poll_interval_sec must be a positive number")
+        if not isinstance(self.hardware, str):
+            raise ConfigError("voice.hardware must be a string")
+        if self.enabled and not self.hardware.strip():
+            raise ConfigError("voice.hardware is required when voice.enabled is true")
+
+
+def _bool_value(value: Any, source: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{source} must be a boolean")
+
+
+def _voice_value(value: Any) -> VoiceSettings:
+    if not isinstance(value, dict):
+        raise ConfigError("config key 'voice' must be a mapping")
+    defaults = VoiceSettings()
+    vals = {k: value.get(k, getattr(defaults, k)) for k in ("enabled", "poll_interval_sec", "hijack_all_play", "speak_confirm", "hardware")}
+    for key in ("enabled", "hijack_all_play", "speak_confirm"):
+        vals[key] = _bool_value(vals[key], f"voice.{key}")
+    try:
+        vals["poll_interval_sec"] = float(vals["poll_interval_sec"])
+    except (TypeError, ValueError) as exc:
+        raise ConfigError("voice.poll_interval_sec must be a positive number") from exc
+    return VoiceSettings(**vals)
+
+
 def _non_empty_env(name: str) -> str | None:
     value = os.getenv(name)
     return value if value else None
@@ -108,6 +151,7 @@ class Settings:
     mina_mode: str = "mock"
     mina_device_id: str | None = None
     public_base_url: str = ""
+    voice: VoiceSettings = field(default_factory=VoiceSettings)
 
     def __post_init__(self) -> None:
         if self.music_dir is not None:
@@ -148,6 +192,8 @@ class Settings:
             "public_base_url",
             _public_base_url_value(self.public_base_url, "settings field 'public_base_url'"),
         )
+        if not isinstance(self.voice, VoiceSettings):
+            object.__setattr__(self, "voice", _voice_value(self.voice))
 
     @property
     def config_path(self) -> Path:
@@ -166,6 +212,13 @@ class Settings:
         mina_mode = data.get("mina_mode", cls.mina_mode)
         mina_device_id = _optional_string_value(data, "mina_device_id")
         public_base_url = data.get("public_base_url")
+        voice_data = data.get("voice", {})
+        if "VOICE_ENABLED" in os.environ:
+            voice_data = dict(voice_data) if isinstance(voice_data, dict) else voice_data
+            if isinstance(voice_data, dict): voice_data["enabled"] = os.environ["VOICE_ENABLED"]
+        if isinstance(voice_data, dict):
+            for key, env_name in (("poll_interval_sec", "VOICE_POLL_INTERVAL_SEC"), ("hijack_all_play", "VOICE_HIJACK_ALL_PLAY"), ("speak_confirm", "VOICE_SPEAK_CONFIRM"), ("hardware", "VOICE_HARDWARE")):
+                if _non_empty_env(env_name) is not None: voice_data[key] = os.environ[env_name]
 
         music_root = _non_empty_env("MUSIC_ROOT") or _non_empty_env("MUSIC_DIR") or music_root
         host = _non_empty_env("HOST") or host
@@ -195,6 +248,7 @@ class Settings:
             mina_mode=_mina_mode_value(mina_mode, "mina_mode"),
             mina_device_id=mina_device_id,
             public_base_url=_public_base_url_value(public_base_url, "public_base_url"),
+            voice=_voice_value(voice_data),
         )
 
     def save(self, path: str | Path | None = None) -> Path:
@@ -209,6 +263,13 @@ class Settings:
             "music_root": self.music_root,
             "host": self.host,
             "port": self.port,
+            "voice": {
+                "enabled": self.voice.enabled,
+                "poll_interval_sec": self.voice.poll_interval_sec,
+                "hijack_all_play": self.voice.hijack_all_play,
+                "speak_confirm": self.voice.speak_confirm,
+                "hardware": self.voice.hardware,
+            },
         }
         temporary: Path | None = None
         try:
