@@ -362,6 +362,63 @@ def test_devices_without_authentication_do_not_return_mock_device(tmp_path: Path
         assert "凭据" in response.json()["detail"]
 
 
+def test_devices_auto_select_persists_first_device_when_none_selected(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(config_dir=config_dir, public_base_url="http://speaker-host:8123", music_dir=tmp_path)
+    service = MusicService(tmp_path, settings.public_base_url, mina_client=MockMinaClient("real-1"), device_id=None)
+
+    app = create_app(settings=settings, service=service)
+    with TestClient(app) as client:
+        response = client.get("/api/devices")
+        assert response.status_code == 200
+        assert response.json()["selected_device_id"] == "real-1"
+        assert app.state.service.device_id == "real-1"
+        assert app.state.settings.mina_device_id == "real-1"
+        assert app.state.voice_worker.device_id == "real-1"
+        assert "real-1" in (config_dir / "config.yaml").read_text(encoding="utf-8")
+
+
+def test_devices_keep_existing_selection_even_if_absent_from_list(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_device_id="stale-device",
+    )
+    service = MusicService(tmp_path, settings.public_base_url, mina_client=MockMinaClient("real-1"), device_id="stale-device")
+
+    app = create_app(settings=settings, service=service)
+    with TestClient(app) as client:
+        response = client.get("/api/devices")
+        assert response.status_code == 200
+        assert response.json()["selected_device_id"] == "stale-device"
+        assert app.state.service.device_id == "stale-device"
+        assert not (config_dir / "config.yaml").exists()
+
+
+def test_devices_auto_select_survives_read_only_config(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_dir.chmod(0o500)
+    settings = Settings(config_dir=config_dir, public_base_url="http://speaker-host:8123", music_dir=tmp_path)
+    service = MusicService(tmp_path, settings.public_base_url, mina_client=MockMinaClient("real-1"), device_id=None)
+
+    try:
+        app = create_app(settings=settings, service=service)
+        with TestClient(app) as client:
+            response = client.get("/api/devices")
+            assert response.status_code == 200
+            assert response.json()["selected_device_id"] == "real-1"
+            assert app.state.service.device_id == "real-1"
+            assert not (config_dir / "config.yaml").exists()
+    finally:
+        config_dir.chmod(0o700)
+
+
 def test_login_with_saved_credentials_does_not_use_mock_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "track.mp3").touch()
     settings = Settings(
@@ -408,7 +465,6 @@ def test_cookie_login_writes_token_and_switches_from_mock_to_real_devices(tmp_pa
         config_dir=config_dir,
         public_base_url="http://speaker-host:8123",
         music_dir=tmp_path,
-        mina_device_id="mock-device",
     )
 
     class FakeRealClient:
@@ -420,14 +476,16 @@ def test_cookie_login_writes_token_and_switches_from_mock_to_real_devices(tmp_pa
 
     monkeypatch.setattr("app.routes.MinaMiserviceClient", FakeRealClient)
 
-    with TestClient(create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url, device_id="mock-device"))) as client:
+    with TestClient(create_app(settings=settings)) as client:
         response = client.post("/api/login/cookies", json={"cookies": "userId=123; serviceToken=tok; ssecurity=sec"})
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "success"
         assert body["devices"] == [{"id": "real-device", "name": "客厅音箱"}]
         assert body["devices"] != [{"id": "mock-device", "name": "Mock Mina"}]
+        # 选择同步集中在 GET /api/devices（前端登录成功后立即拉取）。
         assert client.get("/api/devices").json()["selected_device_id"] == "real-device"
+        assert "real-device" in (config_dir / "config.yaml").read_text(encoding="utf-8")
         token = json.loads((config_dir / ".mi.token").read_text())
         assert token["userId"] == 123
         assert token["micoapi"] == ["sec", "tok"]

@@ -44,14 +44,14 @@ def _bind_mina_client(request: Request, client: object, *, device_id: str | None
     worker.update_runtime(mina_client=client, device_id=device_id)
 
 
-def _activate_real_mina(request: Request, settings: Settings) -> tuple[Settings, MinaMiserviceClient]:
+def _activate_real_mina(request: Request, settings: Settings) -> MinaMiserviceClient:
     """Switch an injected/test client to the token-backed MiNA client."""
-    if isinstance(request.app.state.service.mina_client, MinaMiserviceClient):
-        client = request.app.state.service.mina_client
-        return settings, client
+    client = request.app.state.service.mina_client
+    if isinstance(client, MinaMiserviceClient):
+        return client
     client = MinaMiserviceClient(settings.xiaomi_user, settings.xiaomi_password, settings.config_dir)
     _bind_mina_client(request, client, device_id=settings.mina_device_id)
-    return settings, client
+    return client
 
 
 @router.get("/", response_class=FileResponse)
@@ -266,13 +266,9 @@ async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, ob
 def login_start(request: Request) -> dict[str, object]:
     manager = request.app.state.login_manager
     settings: Settings = request.app.state.settings
-    client = request.app.state.service.mina_client
     if not settings.xiaomi_user or not settings.xiaomi_password:
         raise HTTPException(status_code=422, detail="请先填写并保存小米账号密码")
-    try:
-        settings, client = _activate_real_mina(request, settings)
-    except ConfigError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    client = _activate_real_mina(request, settings)
     token_path = getattr(client, "token_path", Path(settings.config_dir) / ".mi.token")
     if not manager.start(settings.xiaomi_user, settings.xiaomi_password, token_path):
         raise HTTPException(status_code=409, detail="已有登录会话进行中")
@@ -339,22 +335,11 @@ def login_cookies(payload: CookieLoginRequest, request: Request) -> dict[str, ob
             token_path.unlink(missing_ok=True)
         raise HTTPException(status_code=401, detail=f"Cookies 无效或已过期，请重新获取并粘贴：{exc}") from exc
     if switch_to_real:
-        selected = settings.mina_device_id
-        ids = {item.id for item in listed}
-        if listed and selected not in ids:
-            selected = listed[0].id
-        try:
-            updated = replace(settings, mina_device_id=selected)
-            updated.save()
-        except ConfigError as exc:
-            if backup is not None:
-                token_path.write_bytes(backup)
-                token_path.chmod(0o600)
-            else:
-                token_path.unlink(missing_ok=True)
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        request.app.state.settings = updated
-        _bind_mina_client(request, auth_client, device_id=selected)
+        # The pasted cookies proved valid against the real MiNA endpoint, so
+        # playback, API and voice polling must use the token-backed client
+        # from now on.  Device selection stays in GET /api/devices, which the
+        # management UI fetches right after this call.
+        _bind_mina_client(request, auth_client, device_id=settings.mina_device_id)
     return {
         "status": "success",
         "devices": [{"id": item.id, "name": item.name} for item in listed],
@@ -384,11 +369,11 @@ def devices(request: Request) -> dict[str, object]:
     except MinaClientError as exc:
         raise _mina_failure(exc) from exc
     selected = request.app.state.service.device_id
-    ids = {item.id for item in listed}
-    if listed and selected not in ids:
-        # A login can replace the old mock/stale selection.  Keep playback,
-        # voice polling, and the persisted configuration aligned with the
-        # first real device until the user explicitly selects another one.
+    if listed and selected is None:
+        # First use without a configured device: adopt the first real one so
+        # playback and voice polling work out of the box.  An existing
+        # selection is never overridden here — the selected device may only be
+        # missing from a transient upstream list; switching is the user's call.
         selected = listed[0].id
         settings = replace(request.app.state.settings, mina_device_id=selected)
         try:

@@ -777,7 +777,8 @@ async function cookieLogin() {
   btn.disabled = true; btn.textContent = "验证中…";
   try {
     const res = await api("api/login/cookies", { method: "POST", body: { cookies: raw } });
-    applyDevices({ devices: res.devices, selected_device_id: state.selectedDevice });
+    try { applyDevices(await api("api/devices")); }
+    catch { applyDevices({ devices: res.devices, selected_device_id: state.selectedDevice }); }
     note("accNote", "Cookies 登录成功，账号下共 " + (res.devices || []).length + " 台设备，已在「音箱设备」卡片列出。", "info");
     toast("Cookies 登录成功", "ok");
     $("cookieInput").value = "";
