@@ -163,10 +163,13 @@ svg.ic { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.7; fil
 /* ── Fields ── */
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-3); min-width: 0; }
 .field label { font-size: var(--text-xs); font-weight: 500; letter-spacing: 0.02em; color: var(--fg); }
-.field input[type="text"], .field input[type="password"], .field input[type="url"], .field input[type="number"], .field input[type="search"] {
+.field input[type="text"], .field input[type="password"], .field input[type="url"], .field input[type="number"], .field input[type="search"], .field textarea {
   width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg); font: 400 var(--text-sm)/1.4 var(--font-body); transition: border-color var(--motion-fast) var(--ease-standard);
 }
-.field input::placeholder { color: color-mix(in oklab, var(--muted), transparent 25%); }
+.field textarea { resize: vertical; font-family: var(--font-mono, monospace); }
+.field input::placeholder, .field textarea::placeholder { color: color-mix(in oklab, var(--muted), transparent 25%); }
+details.adv > summary { cursor: pointer; font-size: var(--text-xs); color: var(--muted); user-select: none; }
+details.adv[open] > summary { margin-bottom: var(--space-2); }
 .field-help { font-size: var(--text-xs); color: var(--muted); }
 .switch-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; }
 .switch-row .lbl { font-size: var(--text-sm); }
@@ -444,6 +447,18 @@ svg.ic { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.7; fil
         <button class="btn btn-primary" id="btnLogin" data-od-id="login-btn">保存并登录</button>
         <button class="btn btn-danger" id="btnClearToken" data-od-id="clear-token-btn">清除 token</button>
       </div>
+      <hr class="divider">
+      <details class="adv" id="cookieLoginBox" data-od-id="cookie-login-box">
+        <summary>Cookies 登录（高级）— 无法使用账号密码时的备选方案</summary>
+        <div class="field">
+          <label for="cookieInput">凭证</label>
+          <textarea id="cookieInput" rows="4" placeholder="userId=xxx; serviceToken=xxx&#10;或直接粘贴 .mi.token 文件的 JSON 内容"></textarea>
+          <span class="field-help">在其他已登录设备上复制 <span class="mono">.mi.token</span> 文件内容，或抓包 <span class="mono">api2.mina.mi.com</span> 请求 Cookie 中的 userId / serviceToken。凭证由小米侧签发，过期后需重新获取并粘贴。</span>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" id="btnCookieLogin" data-od-id="cookie-login-btn">使用 Cookies 登录</button>
+        </div>
+      </details>
       <div class="note" id="accNote" role="status" data-od-id="account-note"></div>
     </section>
 
@@ -771,6 +786,24 @@ async function clearToken() {
   }
 }
 
+async function cookieLogin() {
+  const raw = $("cookieInput").value.trim();
+  if (!raw) { toast("请先粘贴凭证", "err"); return; }
+  const btn = $("btnCookieLogin");
+  btn.disabled = true; btn.textContent = "验证中…";
+  try {
+    const res = await api("api/login/cookies", { method: "POST", body: { cookies: raw } });
+    applyDevices({ devices: res.devices, selected_device_id: state.selectedDevice });
+    note("accNote", "Cookies 登录成功，账号下共 " + (res.devices || []).length + " 台设备，已在「音箱设备」卡片列出。", "info");
+    toast("Cookies 登录成功", "ok");
+    $("cookieInput").value = "";
+  } catch (e) {
+    note("accNote", "Cookies 登录失败：" + esc(e.message) + "<br>请确认 userId 与 serviceToken 有效且未过期。", "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "使用 Cookies 登录";
+  }
+}
+
 /* ── Devices ── */
 function applyDevices(res) {
   state.devices = res.devices || [];
@@ -991,6 +1024,7 @@ $("btnUseOrigin").addEventListener("click", () => {
   else toast("当前页面不是 http(s) 来源，无法读取地址", "err");
 });
 $("btnLogin").addEventListener("click", saveAndLogin);
+$("btnCookieLogin").addEventListener("click", cookieLogin);
 $("btnClearToken").addEventListener("click", clearToken);
 $("btnOtpSubmit").addEventListener("click", submitOtp);
 $("btnOtpCancel").addEventListener("click", cancelLogin);

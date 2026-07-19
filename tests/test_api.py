@@ -362,6 +362,70 @@ def test_login_endpoints_in_mock_mode(tmp_path: Path) -> None:
         assert client.post("/api/login/cancel").status_code == 200
 
 
+def test_cookie_login_writes_token_and_lists_devices(tmp_path: Path) -> None:
+    import json
+
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_device_id="mock-device",
+    )
+
+    with TestClient(create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url, device_id="mock-device"))) as client:
+        response = client.post("/api/login/cookies", json={"cookies": "userId=123; serviceToken=tok; ssecurity=sec"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "success"
+        assert body["devices"] == [{"id": "mock-device", "name": "Mock Mina"}]
+        token = json.loads((config_dir / ".mi.token").read_text())
+        assert token["userId"] == 123
+        assert token["micoapi"] == ["sec", "tok"]
+
+        missing = client.post("/api/login/cookies", json={"cookies": "userId=123"})
+        assert missing.status_code == 422
+        assert "serviceToken" in missing.json()["detail"]
+
+        explicit = client.post("/api/login/cookies", json={"user_id": "9", "service_token": "tok2"})
+        assert explicit.status_code == 200
+        assert json.loads((config_dir / ".mi.token").read_text())["micoapi"] == ["", "tok2"]
+
+
+def test_cookie_login_rolls_back_token_on_invalid_credentials(tmp_path: Path) -> None:
+    from app.mina_client import MinaUpstreamError
+
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    token_path = config_dir / ".mi.token"
+    token_path.write_text('{"userId": 1, "micoapi": ["", "old"]}')
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_device_id="mock-device",
+    )
+
+    class FailingClient(MockMinaClient):
+        def __init__(self) -> None:
+            super().__init__("mock-device")
+            self.token_path = token_path
+
+        def list_devices(self):
+            raise MinaUpstreamError("Mina request failed: 401")
+
+    app = create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url, device_id="mock-device"))
+    app.state.service.mina_client = FailingClient()
+    with TestClient(app) as client:
+        response = client.post("/api/login/cookies", json={"cookies": "userId=2; serviceToken=bad"})
+        assert response.status_code == 401
+        assert "无效或已过期" in response.json()["detail"]
+        # 旧 token 被回滚保留
+        assert '"old"' in token_path.read_text()
+
+
 def test_login_requires_saved_credentials_in_miservice_mode(tmp_path: Path) -> None:
     (tmp_path / "track.mp3").touch()
     settings = Settings(

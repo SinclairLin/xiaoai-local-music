@@ -10,8 +10,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .config import ConfigError, Settings
+from .cookie_login import CookieParseError, build_token, parse_credentials, write_token_file
 from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient
-from .models import ConfigUpdate, OtpSubmitRequest, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
+from .models import ConfigUpdate, CookieLoginRequest, OtpSubmitRequest, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
 from .service import PlaybackStateError, TrackNotFoundError
 from .voice import VoiceIntent, parse_command
 
@@ -265,6 +266,45 @@ def login_otp(payload: OtpSubmitRequest, request: Request) -> dict[str, object]:
     if not manager.submit_otp(payload.code.strip()):
         raise HTTPException(status_code=409, detail="当前没有等待验证码的登录会话")
     return manager.status()
+
+
+@router.post("/api/login/cookies")
+def login_cookies(payload: CookieLoginRequest, request: Request) -> dict[str, object]:
+    manager = request.app.state.login_manager
+    if manager.is_active():
+        raise HTTPException(status_code=409, detail="已有登录会话进行中，请先取消")
+    settings: Settings = request.app.state.settings
+    client = request.app.state.service.mina_client
+    try:
+        fields = parse_credentials(payload.cookies or "") if payload.cookies else {}
+        explicit = {
+            "userId": payload.user_id,
+            "serviceToken": payload.service_token,
+            "ssecurity": payload.ssecurity,
+            "passToken": payload.pass_token,
+            "deviceId": payload.device_id,
+        }
+        fields.update({key: value for key, value in explicit.items() if value})
+        token = build_token(fields)
+    except CookieParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    token_path = Path(getattr(client, "token_path", Path(settings.config_dir) / ".mi.token"))
+    backup = token_path.read_bytes() if token_path.is_file() else None
+    write_token_file(token_path, token)
+    try:
+        listed = client.list_devices()
+    except MinaClientError as exc:
+        # 新凭证不可用则回滚，避免把原本还能用的 token 覆盖掉。
+        if backup is not None:
+            token_path.write_bytes(backup)
+            token_path.chmod(0o600)
+        else:
+            token_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=401, detail=f"Cookies 无效或已过期：{exc}") from exc
+    return {
+        "status": "success",
+        "devices": [{"id": item.id, "name": item.name} for item in listed],
+    }
 
 
 @router.post("/api/login/cancel")
