@@ -203,3 +203,34 @@ def test_create_app_uses_music_root(monkeypatch, tmp_path) -> None:
 
     assert app.state.service.music_dir == music_root
     assert app.state.service.list_tracks()[0].title == "稻香"
+
+
+def test_invalid_mina_mode_in_yaml_fails(monkeypatch, tmp_path) -> None:
+    clear_config_env(monkeypatch)
+    (tmp_path / "config.yaml").write_text("mina_mode: cloud\n", encoding="utf-8")
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
+
+    with pytest.raises(ConfigError, match="mina_mode"):
+        Settings.from_env()
+
+
+def test_settings_constructor_rejects_invalid_mina_mode() -> None:
+    with pytest.raises(ConfigError, match="mina_mode"):
+        Settings(public_base_url="http://testserver", mina_mode="cloud")
+
+
+def test_mina_environment_overrides_yaml(monkeypatch, tmp_path) -> None:
+    clear_config_env(monkeypatch)
+    (tmp_path / "config.yaml").write_text(
+        "mina_mode: mock\nmina_device_id: yaml-device\npublic_base_url: http://yaml.example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MINA_MODE", "miservice")
+    monkeypatch.setenv("MINA_DEVICE_ID", "env-device")
+
+    settings = Settings.from_env()
+
+    assert settings.mina_mode == "miservice"
+    assert settings.mina_device_id == "env-device"

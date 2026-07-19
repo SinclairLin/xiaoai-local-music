@@ -1,4 +1,4 @@
-"""Music catalogue and mock playback service."""
+"""Music catalogue scanning and Mina playback coordination."""
 
 from __future__ import annotations
 
@@ -219,10 +219,7 @@ class MusicService:
         return self._queue[self._current_index]
 
     def set_volume(self, volume: int) -> None:
-        method = getattr(self.mina_client, "set_volume", None)
-        if method is None:
-            raise NotImplementedError("Mina client does not support volume control")
-        method(volume, self._require_device())
+        self.mina_client.set_volume(volume, self._require_device())
 
     def set_device_id(self, device_id: str | None) -> None:
         self.device_id = device_id

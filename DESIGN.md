@@ -17,4 +17,4 @@
 
 ## 风险与后续
 
-服务仍没有用户认证和数据库。Mina 控制通过 miservice 直连小米云：同步端点在无事件循环的线程池中以 `asyncio.run` 逐次桥接（端点若改为 async 需更换桥接方案）；小米风控触发 OTP 时服务无法交互，需在宿主机 `python -m miservice` 预登录并把 `.mi.token` 放入 config 目录。真实部署应在可信内网使用；若开放到公网，需要增加认证和请求限流。
+服务仍没有用户认证和数据库。Mina 控制通过 miservice 直连小米云：同步端点在无事件循环的线程池中以 `asyncio.run` 逐次桥接（端点若改为 async 需更换桥接方案）；小米风控触发 OTP 时服务无法交互，需在宿主机 `python -m miservice` 预登录并把 `.mi.token` 放入 config 目录。同步端点在线程池并发执行，内存队列与 Mina client 的替换未加锁，家庭单用户场景可接受，高并发使用需先补锁；`music_root`、`host`、`port`、`public_base_url` 只在启动时被消费，运行时修改需重启生效，`PUT /api/config` 响应以 `restart_required` 标注。真实部署应在可信内网使用；若开放到公网，需要增加认证和请求限流。

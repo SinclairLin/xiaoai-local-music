@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .config import ConfigError, Settings
-from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient, MinaDevice
+from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient
 from .models import ConfigUpdate, PlayRequest, VoiceRequest, VolumeRequest
 from .service import PlaybackStateError, TrackNotFoundError
 from .voice import parse_play_command
@@ -141,7 +141,13 @@ def update_config(payload: ConfigUpdate, request: Request) -> dict[str, object]:
         client.update_credentials(updated.xiaomi_user, updated.xiaomi_password)
     if isinstance(client, MockMinaClient):
         client.device_id = updated.mina_device_id or "mock-device"
-    return get_config(request)
+    response = get_config(request)
+    # 这些字段只在进程启动时被消费，运行时修改需重启才生效。
+    response["restart_required"] = any(
+        getattr(updated, key) != getattr(old, key)
+        for key in ("music_root", "host", "port", "public_base_url")
+    )
+    return response
 
 
 @router.get("/api/devices")
@@ -151,7 +157,7 @@ def devices(request: Request) -> dict[str, object]:
     except MinaClientError as exc:
         raise _mina_failure(exc) from exc
     return {
-        "devices": [{"id": item.id, "name": item.name} if isinstance(item, MinaDevice) else item for item in listed],
+        "devices": [{"id": item.id, "name": item.name} for item in listed],
         "selected_device_id": request.app.state.service.device_id,
     }
 
@@ -228,8 +234,6 @@ def volume(payload: VolumeRequest, request: Request) -> dict[str, object]:
         request.app.state.service.set_volume(payload.volume)
     except MinaDeviceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except NotImplementedError as exc:
-        raise HTTPException(status_code=501, detail=str(exc)) from exc
     except MinaClientError as exc:
         raise _mina_failure(exc) from exc
     return _queue_response(request)

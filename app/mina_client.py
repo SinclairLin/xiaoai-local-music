@@ -91,6 +91,13 @@ class MinaMiserviceClient:
             yield MiNAService(account)
 
     def _run(self, op: Callable[[MiNAService], Awaitable[Any]]) -> Any:
+        if not (self.username and self.password) and not self.token_path.is_file():
+            raise MinaAuthError(
+                "Mina 凭据未配置且缺少 token 文件："
+                "请配置 xiaomi_user/xiaomi_password，"
+                f"或按 README 在宿主机预登录后将 .mi.token 放入 {self.config_dir}"
+            )
+
         async def runner() -> Any:
             async with self._service_factory() as service:
                 return await op(service)

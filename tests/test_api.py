@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from app.mina_client import MinaMiserviceClient, MockMinaClient
 from app.service import MusicService
 
 
@@ -175,3 +176,35 @@ def test_scan_excludes_symlink_outside_music_root(tmp_path: Path) -> None:
         create_app(settings=settings, service=MusicService(music_root, public_base_url))
     ) as client:
         assert client.get("/api/tracks").json()["tracks"] == []
+
+
+def test_config_update_flags_restart_required_and_rebuilds_client(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        xiaomi_user="user",
+        xiaomi_password="secret",
+    )
+    app = create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url))
+    with TestClient(app) as client:
+        runtime_only = client.put("/api/config", json={"mina_device_id": "device-9"})
+        assert runtime_only.status_code == 200
+        assert runtime_only.json()["restart_required"] is False
+
+        switched = client.put("/api/config", json={"mina_mode": "miservice"})
+        assert switched.status_code == 200
+        assert switched.json()["restart_required"] is False
+        assert isinstance(app.state.mina_client, MinaMiserviceClient)
+        assert app.state.service.mina_client is app.state.mina_client
+
+        client.put("/api/config", json={"mina_mode": "mock"})
+        assert isinstance(app.state.mina_client, MockMinaClient)
+        assert app.state.mina_client.device_id == "device-9"
+
+        same_value = client.put("/api/config", json={"music_root": str(tmp_path)})
+        assert same_value.json()["restart_required"] is False
+        moved = client.put("/api/config", json={"music_root": str(tmp_path / "elsewhere")})
+        assert moved.json()["restart_required"] is True

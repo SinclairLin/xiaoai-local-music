@@ -151,3 +151,26 @@ def test_login_probes_devices_and_returns_authenticated(tmp_path: Path) -> None:
 
     assert client.login() == "authenticated"
     assert service.calls == [("device_list", (0,))]
+
+
+def test_run_without_credentials_or_token_raises_auth_error_before_network(tmp_path: Path) -> None:
+    entered = False
+
+    @asynccontextmanager
+    async def factory():
+        nonlocal entered
+        entered = True
+        yield FakeMiNAService()
+
+    client = MinaMiserviceClient(None, None, tmp_path, service_factory=factory)
+
+    with pytest.raises(MinaAuthError, match="token"):
+        client.list_devices()
+    assert entered is False
+
+
+def test_run_with_token_file_but_no_credentials_proceeds(tmp_path: Path) -> None:
+    (tmp_path / ".mi.token").write_text("{}", encoding="utf-8")
+    client = make_client(tmp_path, FakeMiNAService(devices=[]), username=None, password=None)
+
+    assert client.list_devices() == []
