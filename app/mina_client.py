@@ -218,6 +218,12 @@ class MinaMiserviceClient:
 
     async def _conversation_events(self, service: MiNAService, device_id: str, hardware: str, after_timestamp: int) -> list[dict[str, Any]]:
         account = service.account
+        # Unlike MiAccount.mi_request(), this endpoint uses the session
+        # directly, so it must load the persisted token before deciding that
+        # an account login is required.  Otherwise every fresh polling
+        # request can send another password/OTP login despite .mi.token.
+        if account.token is None and account.token_store is not None:
+            account.token = await account.token_store.load_token()
         if not account.token:
             await account.login("micoapi")
         token = account.token or {}
