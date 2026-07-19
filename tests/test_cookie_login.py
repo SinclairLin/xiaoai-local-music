@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.cookie_login import CookieParseError, build_token, parse_credentials, write_token_file
+from app.cookie_login import COOKIE_AUTH_SOURCE, CookieParseError, build_token, parse_credentials, write_token_file
 
 
 def test_parse_cookie_string() -> None:
@@ -21,6 +21,31 @@ def test_parse_cookie_string() -> None:
 def test_parse_cookie_string_ignores_unknown_and_handles_newlines() -> None:
     fields = parse_credentials('user_id=42\nservice_token="tok"; sdkVersion=3.9')
     assert fields == {"userId": "42", "serviceToken": "tok"}
+
+
+def test_parse_full_cookie_header_extracts_mina_fields() -> None:
+    raw = (
+        "Cookie: uLocale=zh_CN; deviceId=wb-device; pass_ua=web; "
+        "passportsecurity_slh=ignored; cUserId=ignored; cUserId=ignored; "
+        "userId=2236181615; passInfo=login-end; "
+        "serviceToken=2.0&V1_passport&1:long-token==; "
+        "passToken=V1:pass-token==; passport_ph=ignored"
+    )
+
+    fields = parse_credentials(raw)
+
+    assert fields == {
+        "deviceId": "wb-device",
+        "userId": "2236181615",
+        "serviceToken": "2.0&V1_passport&1:long-token==",
+        "passToken": "V1:pass-token==",
+    }
+
+
+def test_build_token_can_mark_cookie_auth_source() -> None:
+    token = build_token({"userId": "1", "serviceToken": "tok"}, auth_source=COOKIE_AUTH_SOURCE)
+
+    assert token["_auth_source"] == "cookies"
 
 
 def test_parse_mi_token_json() -> None:

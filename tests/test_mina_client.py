@@ -11,6 +11,7 @@ from app.mina_client import (
     MinaDevice,
     MinaMiserviceClient,
     MinaUpstreamError,
+    _CookieTokenAccount,
     _otp_unavailable,
 )
 
@@ -296,3 +297,108 @@ def test_voice_events_persistent_auth_error_raises_without_ubus_fallback(tmp_pat
     with pytest.raises(MinaAuthError, match="authentication expired"):
         client.fetch_voice_events("d1", "LX06", 0)
     assert ("get_latest_ask", ("d1",)) not in service.calls
+
+
+def test_voice_events_cookie_auth_error_does_not_trigger_login(tmp_path: Path) -> None:
+    client, service = make_conversation_client(tmp_path, [
+        FakeConversationResponse(401, {"code": 401, "message": "auth failed"}),
+    ])
+    service.account.token["_auth_source"] = "cookies"
+
+    with pytest.raises(MinaAuthError, match="Cookies 已失效"):
+        client.fetch_voice_events("d1", "LX06", 0)
+    assert service.account.logins == []
+
+
+class FakeMiRequestResponse:
+    status = 401
+
+    async def __aenter__(self) -> "FakeMiRequestResponse":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+    async def text(self) -> str:
+        return "auth failed"
+
+
+class FakeMiRequestSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def request(self, method: str, url: str, **kwargs: Any) -> FakeMiRequestResponse:
+        self.calls.append((method, url, kwargs))
+        return FakeMiRequestResponse()
+
+
+def test_cookie_token_account_preserves_token_and_skips_password_login(tmp_path: Path) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({"userId": 1, "micoapi": ["", "cookie-token"], "_auth_source": "cookies"}),
+        encoding="utf-8",
+    )
+    session = FakeMiRequestSession()
+    account = _CookieTokenAccount(
+        session,
+        "user",
+        "password",
+        token_store=str(token_path),
+        otp_callback=_otp_unavailable,
+    )
+
+    with pytest.raises(Exception, match="Error"):
+        asyncio.run(account.mi_request("micoapi", "https://api2.mina.mi.com/test", None, {}))
+
+    assert account.token is not None
+    assert account.token["_auth_source"] == "cookies"
+    assert json.loads(token_path.read_text(encoding="utf-8"))["micoapi"][1] == "cookie-token"
+    assert len(session.calls) == 1
+
+
+def test_cookie_token_account_login_loads_stored_token_without_requests(tmp_path: Path) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({"userId": 1, "micoapi": ["sec", "cookie-token"], "_auth_source": "cookies"}),
+        encoding="utf-8",
+    )
+    session = FakeMiRequestSession()
+    account = _CookieTokenAccount(
+        session,
+        "user",
+        "password",
+        token_store=str(token_path),
+        otp_callback=_otp_unavailable,
+    )
+
+    assert asyncio.run(account.login("micoapi")) is True
+    assert account.token["micoapi"][1] == "cookie-token"
+    # token 中不存在的 sid 只报失败，绝不发起账号请求（不触发 OTP）。
+    assert asyncio.run(account.login("passportapi")) is False
+    assert session.calls == []
+
+
+def test_voice_events_cookie_account_loads_stored_token(tmp_path: Path) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({"userId": 1, "micoapi": ["sec", "tok"], "_auth_source": "cookies"}),
+        encoding="utf-8",
+    )
+    session = FakeConversationSession([
+        FakeConversationResponse(200, _conversation_body([
+            {"time": 5, "query": "播放稻香", "requestId": "c1"},
+        ])),
+    ])
+    service = FakeMiNAService(devices=[])
+    service.account = _CookieTokenAccount(
+        session,
+        None,
+        None,
+        token_store=str(token_path),
+        otp_callback=_otp_unavailable,
+    )
+    client = make_client(tmp_path, service)
+
+    events = client.fetch_voice_events("d1", "LX06", 0)
+
+    assert [event["query"] for event in events] == ["播放稻香"]

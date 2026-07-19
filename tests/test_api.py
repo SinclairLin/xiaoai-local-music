@@ -383,6 +383,7 @@ def test_cookie_login_writes_token_and_lists_devices(tmp_path: Path) -> None:
         token = json.loads((config_dir / ".mi.token").read_text())
         assert token["userId"] == 123
         assert token["micoapi"] == ["sec", "tok"]
+        assert token["_auth_source"] == "cookies"
 
         missing = client.post("/api/login/cookies", json={"cookies": "userId=123"})
         assert missing.status_code == 422
@@ -422,6 +423,7 @@ def test_cookie_login_rolls_back_token_on_invalid_credentials(tmp_path: Path) ->
         response = client.post("/api/login/cookies", json={"cookies": "userId=2; serviceToken=bad"})
         assert response.status_code == 401
         assert "无效或已过期" in response.json()["detail"]
+        assert "重新获取并粘贴" in response.json()["detail"]
         # 旧 token 被回滚保留
         assert '"old"' in token_path.read_text()
 

@@ -2,7 +2,8 @@
 
 Accepted input formats:
 
-* Cookie string, e.g. ``userId=123; serviceToken=xxx; deviceId=ABC...``
+* Cookie string or a copied ``Cookie:`` request header, e.g.
+  ``userId=123; serviceToken=xxx; deviceId=ABC...``
 * A full ``.mi.token`` JSON document copied from another machine
 * A flat JSON object with ``userId``/``serviceToken`` keys
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import string
 from pathlib import Path
 from typing import Any
@@ -36,6 +38,8 @@ _FIELD_ALIASES = {
     "deviceid": "deviceId",
     "device_id": "deviceId",
 }
+
+COOKIE_AUTH_SOURCE = "cookies"
 
 
 def _normalize_key(key: str) -> str | None:
@@ -66,7 +70,11 @@ def _fields_from_json(data: Any) -> dict[str, str]:
 
 def _fields_from_cookie_string(raw: str) -> dict[str, str]:
     fields: dict[str, str] = {}
-    for part in raw.replace("\n", ";").split(";"):
+    # Browser developer tools often copy the complete request header instead
+    # of only its value.  Strip a standalone ``Cookie:`` prefix while keeping
+    # the rest of the parser deliberately limited to cookie key/value pairs.
+    raw = re.sub(r"(?im)^[ \t]*cookie[ \t]*:[ \t]*", "", raw)
+    for part in raw.replace("\r", "\n").replace("\n", ";").split(";"):
         if "=" not in part:
             continue
         key, _, value = part.partition("=")
@@ -90,7 +98,7 @@ def parse_credentials(raw: str) -> dict[str, str]:
     return _fields_from_cookie_string(raw)
 
 
-def build_token(fields: dict[str, str]) -> dict[str, Any]:
+def build_token(fields: dict[str, str], *, auth_source: str | None = None) -> dict[str, Any]:
     """Assemble a miservice-compatible token dict, validating required fields."""
     missing = [name for name in ("userId", "serviceToken") if not fields.get(name)]
     if missing:
@@ -105,6 +113,8 @@ def build_token(fields: dict[str, str]) -> dict[str, Any]:
     }
     if fields.get("passToken"):
         token["passToken"] = fields["passToken"]
+    if auth_source:
+        token["_auth_source"] = auth_source
     return token
 
 
