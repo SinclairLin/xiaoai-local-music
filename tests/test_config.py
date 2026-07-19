@@ -19,6 +19,11 @@ def clear_config_env(monkeypatch) -> None:
         "PUBLIC_BASE_URL",
         "HOST",
         "PORT",
+        "VOICE_ENABLED",
+        "VOICE_POLL_INTERVAL_SEC",
+        "VOICE_HIJACK_ALL_PLAY",
+        "VOICE_SPEAK_CONFIRM",
+        "VOICE_HARDWARE",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -234,3 +239,45 @@ def test_mina_environment_overrides_yaml(monkeypatch, tmp_path) -> None:
 
     assert settings.mina_mode == "miservice"
     assert settings.mina_device_id == "env-device"
+
+
+def test_voice_nested_config_and_environment_overrides(monkeypatch, tmp_path) -> None:
+    clear_config_env(monkeypatch)
+    (tmp_path / "config.yaml").write_text(
+        "public_base_url: http://testserver\nvoice:\n  enabled: false\n  poll_interval_sec: 2\n  hardware: LX06\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    monkeypatch.setenv("VOICE_POLL_INTERVAL_SEC", "0.75")
+    monkeypatch.setenv("VOICE_HIJACK_ALL_PLAY", "false")
+    monkeypatch.setenv("VOICE_SPEAK_CONFIRM", "false")
+    monkeypatch.setenv("VOICE_HARDWARE", "LX04")
+
+    settings = Settings.from_env()
+
+    assert settings.voice.enabled is True
+    assert settings.voice.poll_interval_sec == 0.75
+    assert settings.voice.hijack_all_play is False
+    assert settings.voice.speak_confirm is False
+    assert settings.voice.hardware == "LX04"
+
+
+def test_enabled_voice_requires_hardware() -> None:
+    with pytest.raises(ConfigError, match="voice.hardware"):
+        Settings(public_base_url="http://testserver", voice={"enabled": True})
+
+
+def test_blank_voice_environment_values_are_ignored(monkeypatch, tmp_path) -> None:
+    clear_config_env(monkeypatch)
+    (tmp_path / "config.yaml").write_text(
+        "public_base_url: http://testserver\nvoice:\n  enabled: false\n  hardware: LX06\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("VOICE_ENABLED", "")
+
+    settings = Settings.from_env()
+
+    assert settings.voice.enabled is False
+    assert settings.voice.hardware == "LX06"

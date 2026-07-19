@@ -7,6 +7,12 @@ from app.config import Settings
 from app.main import create_app
 from app.mina_client import MinaMiserviceClient, MockMinaClient
 from app.service import MusicService
+from app.voice_worker import VoicePollResult
+
+
+class EmptyVoiceSource:
+    async def poll(self, after_timestamp: int) -> VoicePollResult:
+        return VoicePollResult(())
 
 
 def test_api_health_tracks_and_play(tmp_path) -> None:
@@ -31,6 +37,79 @@ def test_api_health_tracks_and_play(tmp_path) -> None:
         voice_response = client.post("/api/voice", json={"text": "播放 稻香"})
         assert voice_response.status_code == 200
         assert voice_response.json()["track"]["path"] == expected_url
+
+
+def test_voice_status_enable_and_logs(tmp_path: Path) -> None:
+    (tmp_path / "稻香.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_device_id="mock-device",
+        voice={"hardware": "LX06"},
+    )
+    app = create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url), voice_source=EmptyVoiceSource())
+    with TestClient(app) as client:
+        assert client.get("/api/voice/status").json()["enabled"] is False
+        enabled = client.post("/api/voice/enable", json={"enabled": True})
+        assert enabled.status_code == 200
+        assert enabled.json()["enabled"] is True
+        injected = client.post("/api/voice", json={"text": "播放稻香"})
+        assert injected.status_code == 200
+        assert client.get("/api/logs").json()["logs"][-1]["raw_query"] == "播放稻香"
+        disabled = client.post("/api/voice/enable", json={"enabled": False})
+        assert disabled.status_code == 200
+        assert disabled.json()["enabled"] is False
+    assert "enabled: false" in (config_dir / "config.yaml").read_text(encoding="utf-8")
+
+
+def test_voice_rejects_bare_play_command(tmp_path: Path) -> None:
+    (tmp_path / "稻香.mp3").touch()
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(tmp_path, public_base_url))
+    ) as client:
+        assert client.post("/api/voice", json={"text": "播放"}).status_code == 400
+        assert client.post("/api/voice", json={"text": "播放 本地"}).status_code == 400
+
+
+def test_voice_play_matches_titles_containing_spaces(tmp_path: Path) -> None:
+    (tmp_path / "Shape of You.mp3").touch()
+    public_base_url = "http://speaker-host:8123"
+    settings = Settings(public_base_url=public_base_url, music_dir=tmp_path)
+
+    with TestClient(
+        create_app(settings=settings, service=MusicService(tmp_path, public_base_url))
+    ) as client:
+        response = client.post("/api/voice", json={"text": "播放 Shape of You"})
+        assert response.status_code == 200
+        assert response.json()["track"]["title"] == "Shape of You"
+        spaced = client.get("/api/tracks", params={"q": "Shape of You"}).json()["tracks"]
+        assert [track["title"] for track in spaced] == ["Shape of You"]
+
+
+def test_config_update_voice_enabled_without_hardware_returns_422(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_device_id="mock-device",
+    )
+    app = create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url))
+    with TestClient(app) as client:
+        response = client.put("/api/config", json={"voice": {"enabled": True}})
+        assert response.status_code == 422
+        assert "voice.hardware" in response.json()["detail"]
+
+        accepted = client.put("/api/config", json={"voice": {"enabled": True, "hardware": "LX06"}})
+        assert accepted.status_code == 200
+        assert accepted.json()["voice"]["enabled"] is True
+        assert accepted.json()["voice"]["hardware"] == "LX06"
 
 
 def test_config_api_redacts_password_and_preserves_it_on_masked_update(tmp_path: Path) -> None:

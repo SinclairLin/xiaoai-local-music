@@ -25,6 +25,18 @@ class VoiceRequest(BaseModel):
     text: str = Field(min_length=1)
 
 
+class VoiceEnableRequest(BaseModel):
+    enabled: bool
+
+
+class VoiceConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    poll_interval_sec: float | None = Field(default=None, gt=0)
+    hijack_all_play: bool | None = None
+    speak_confirm: bool | None = None
+    hardware: str | None = None
+
+
 class ConfigUpdate(BaseModel):
     xiaomi_user: str | None = None
     xiaomi_password: str | None = None
@@ -34,6 +46,7 @@ class ConfigUpdate(BaseModel):
     port: int | None = None
     mina_mode: str | None = None
     mina_device_id: str | None = None
+    voice: VoiceConfigUpdate | None = None
 
 
 class VolumeRequest(BaseModel):

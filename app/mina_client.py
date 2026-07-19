@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +34,11 @@ class MinaDeviceError(MinaClientError):
 class MinaDevice:
     id: str
     name: str
+
+
+# Conversation polls run under the client-wide _run lock; without an explicit
+# bound a hung upstream (aiohttp default total=300s) stalls every Mina call.
+_CONVERSATION_TIMEOUT_SEC = 10.0
 
 
 class MinaClient(Protocol):
@@ -73,6 +81,7 @@ class MinaMiserviceClient:
         self.config_dir = Path(config_dir)
         self.token_path = self.config_dir / ".mi.token"
         self._service_factory = service_factory or self._default_service
+        self._lock = threading.RLock()
 
     @asynccontextmanager
     async def _default_service(self):
@@ -103,7 +112,8 @@ class MinaMiserviceClient:
                 return await op(service)
 
         try:
-            return asyncio.run(runner())
+            with self._lock:
+                return asyncio.run(runner())
         except MinaClientError:
             raise
         except Exception as exc:
@@ -155,6 +165,116 @@ class MinaMiserviceClient:
     def set_volume(self, volume: int, device_id: str) -> Any:
         return self._run(lambda service: service.player_set_volume(device_id, volume))
 
+    async def _invalidate_and_login(self, account: MiAccount) -> bool:
+        """Drop a stale micoapi service token and refresh it once."""
+        token = account.token or {}
+        token.pop("micoapi", None)
+        account.token = token
+        if account.token_store:
+            await account.token_store.save_token(token)
+        return bool(await account.login("micoapi"))
+
+    async def _conversation_events(self, service: MiNAService, device_id: str, hardware: str, after_timestamp: int) -> list[dict[str, Any]]:
+        account = service.account
+        if not account.token:
+            await account.login("micoapi")
+        token = account.token or {}
+        if "micoapi" not in token:
+            raise MinaAuthError("Mina micoapi token is unavailable")
+        user_id = str(token.get("userId", ""))
+        service_token = self._service_token(token)
+        if not user_id or not service_token:
+            raise MinaAuthError("Mina micoapi credentials are unavailable")
+        timestamp = int(time.time() * 1000)
+        # limit=2 mirrors upstream clients; more than two commands within one
+        # poll window drop the oldest ones.
+        url = (
+            "https://userprofile.mina.mi.com/device_profile/v2/conversation"
+            f"?source=dialogu&hardware={hardware}&timestamp={timestamp}&limit=2"
+        )
+        cookies = {"userId": user_id, "serviceToken": service_token, "channel": "MI_APP_STORE", "deviceId": device_id}
+        headers = {"User-Agent": getattr(account, "now_ua", "")}
+
+        async def fetch_once() -> tuple[int, Any]:
+            async with account._session.get(url, cookies=cookies, headers=headers) as response:
+                return response.status, await response.json(content_type=None)
+
+        refreshed = False
+        while True:
+            status, body = await asyncio.wait_for(fetch_once(), timeout=_CONVERSATION_TIMEOUT_SEC)
+            code = body.get("code") if isinstance(body, dict) else None
+            message = str(body.get("message", "")) if isinstance(body, dict) else ""
+            if status == 401 or code in {401, 2} or "auth" in message.lower():
+                if refreshed or not await self._invalidate_and_login(account):
+                    raise MinaAuthError("Mina conversation authentication expired")
+                refreshed = True
+                token = account.token or {}
+                service_token = self._service_token(token)
+                cookies["userId"] = str(token.get("userId", user_id))
+                cookies["serviceToken"] = service_token
+                continue
+            if status != 200 or code != 0:
+                raise MinaUpstreamError(f"Mina conversation request failed: HTTP {status}, code={code}")
+            raw_data = body.get("data")
+            data = json.loads(raw_data) if isinstance(raw_data, str) else (raw_data or {})
+            records = data.get("records", []) if isinstance(data, dict) else []
+            return [
+                {
+                    "timestamp": int(record.get("time") or 0),
+                    "query": str(record.get("query") or ""),
+                    "request_id": str(record.get("requestId") or "") or None,
+                    "source": "conversation",
+                }
+                for record in records
+                if int(record.get("time") or 0) > after_timestamp and record.get("query")
+            ]
+
+    async def _ubus_events(self, service: MiNAService, device_id: str, after_timestamp: int) -> list[dict[str, Any]]:
+        messages = await service.get_latest_ask(device_id)
+        result: list[dict[str, Any]] = []
+        for message in messages or []:
+            timestamp = int(message.get("timestamp_ms") or 0)
+            answers = (message.get("response") or {}).get("answer", [])
+            query = next((str(answer.get("question") or "") for answer in answers if answer.get("question")), "")
+            if timestamp > after_timestamp and query:
+                result.append({"timestamp": timestamp, "query": query, "request_id": message.get("request_id"), "source": "ubus"})
+        return result
+
+    def fetch_voice_events(self, device_id: str, hardware: str, after_timestamp: int = 0) -> list[dict[str, Any]]:
+        async def operation(service: MiNAService) -> list[dict[str, Any]]:
+            try:
+                return await self._conversation_events(service, device_id, hardware, after_timestamp)
+            except MinaAuthError:
+                # ubus needs the same micoapi credentials; surface the auth
+                # failure instead of hiding it behind a doomed fallback.
+                raise
+            except Exception:
+                return await self._ubus_events(service, device_id, after_timestamp)
+
+        return self._run(operation)
+
+    @staticmethod
+    def _service_token(token: dict[str, Any]) -> str:
+        value = token.get("micoapi")
+        if isinstance(value, (tuple, list)):
+            return str(value[1] if len(value) > 1 else (value[0] if value else ""))
+        if isinstance(value, dict):
+            return str(value.get("serviceToken") or value.get("service_token") or "")
+        return str(value or "")
+
+    def validate_voice_device(self, device_id: str, hardware: str) -> None:
+        self._run(lambda service: self._validate_async(service, device_id, hardware))
+
+    async def _validate_async(self, service: MiNAService, device_id: str, hardware: str) -> None:
+        devices = await service.device_list()
+        for device in devices or []:
+            if str(device.get("deviceID") or device.get("miotDID") or "") == device_id:
+                actual = str(device.get("hardware") or "")
+                if actual == hardware:
+                    return
+                raise MinaDeviceError(f"hardware mismatch: configured {hardware}, device reports {actual or 'empty'}")
+        raise MinaDeviceError(f"Mina device not found: {device_id}")
+
 
 class MockMinaClient:
     def __init__(self, device_id: str | None = None) -> None:
@@ -192,3 +312,13 @@ class MockMinaClient:
     def set_volume(self, volume: int, device_id: str) -> Any:
         self.calls.append(("set_volume", (volume, device_id)))
         return {"ok": True}
+
+    def validate_voice_device(self, device_id: str, hardware: str) -> None:
+        if device_id != self.device_id:
+            raise MinaDeviceError(f"Mina device not found: {device_id}")
+        if not hardware:
+            raise MinaDeviceError("voice hardware is required")
+
+    def fetch_voice_events(self, device_id: str, hardware: str, after_timestamp: int = 0) -> list[dict[str, Any]]:
+        self.calls.append(("fetch_voice_events", (device_id, hardware, after_timestamp)))
+        return []

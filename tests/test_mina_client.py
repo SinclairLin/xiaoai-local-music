@@ -1,4 +1,5 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,14 @@ class FakeMiNAService:
 
     async def player_set_volume(self, deviceId: str, volume: int) -> Any:
         return await self._record("player_set_volume", deviceId, volume)
+
+    async def get_latest_ask(self, deviceId: str) -> Any:
+        self.calls.append(("get_latest_ask", (deviceId,)))
+        return [{
+            "request_id": "r1",
+            "timestamp_ms": 123,
+            "response": {"answer": [{"question": "播放稻香"}]},
+        }]
 
 
 def make_client(tmp_path: Path, service: FakeMiNAService, username: str | None = "user", password: str | None = "password") -> MinaMiserviceClient:
@@ -174,3 +183,116 @@ def test_run_with_token_file_but_no_credentials_proceeds(tmp_path: Path) -> None
     client = make_client(tmp_path, FakeMiNAService(devices=[]), username=None, password=None)
 
     assert client.list_devices() == []
+
+
+def test_voice_events_fall_back_to_ubus_shape(tmp_path: Path) -> None:
+    service = FakeMiNAService(devices=[])
+    client = make_client(tmp_path, service)
+
+    events = client.fetch_voice_events("d1", "LX06", 0)
+
+    assert events == [{"timestamp": 123, "query": "播放稻香", "request_id": "r1", "source": "ubus"}]
+    assert ("get_latest_ask", ("d1",)) in service.calls
+
+
+def test_voice_device_validation_checks_hardware(tmp_path: Path) -> None:
+    service = FakeMiNAService(devices=[{"deviceID": "d1", "hardware": "LX06"}])
+    client = make_client(tmp_path, service)
+
+    client.validate_voice_device("d1", "LX06")
+    with pytest.raises(Exception, match="hardware mismatch"):
+        client.validate_voice_device("d1", "LX04")
+
+
+class FakeConversationResponse:
+    def __init__(self, status: int, body: Any) -> None:
+        self.status = status
+        self._body = body
+
+    async def json(self, content_type: str | None = None) -> Any:
+        return self._body
+
+    async def __aenter__(self) -> "FakeConversationResponse":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+
+class FakeConversationSession:
+    def __init__(self, responses: list[FakeConversationResponse]) -> None:
+        self.responses = list(responses)
+        self.requests: list[tuple[str, dict[str, Any]]] = []
+
+    def get(self, url: str, **kwargs: Any) -> FakeConversationResponse:
+        self.requests.append((url, kwargs))
+        return self.responses.pop(0)
+
+
+class FakeAccount:
+    def __init__(self, session: FakeConversationSession, token: dict[str, Any]) -> None:
+        self._session = session
+        self.token = token
+        self.token_store = None
+        self.logins: list[str] = []
+
+    async def login(self, sid: str) -> bool:
+        self.logins.append(sid)
+        self.token = {"userId": "u1", "micoapi": ["ssecurity", "refreshed-token"]}
+        return True
+
+
+def make_conversation_client(
+    tmp_path: Path, responses: list[FakeConversationResponse]
+) -> tuple[MinaMiserviceClient, FakeMiNAService]:
+    service = FakeMiNAService(devices=[])
+    service.account = FakeAccount(
+        FakeConversationSession(responses),
+        {"userId": "u1", "micoapi": ["ssecurity", "token-1"]},
+    )
+    return make_client(tmp_path, service), service
+
+
+def _conversation_body(records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"code": 0, "message": "success", "data": json.dumps({"records": records})}
+
+
+def test_voice_events_prefer_conversation_and_filter_watermark(tmp_path: Path) -> None:
+    client, service = make_conversation_client(tmp_path, [
+        FakeConversationResponse(200, _conversation_body([
+            {"time": 5, "query": "播放稻香", "requestId": "c1"},
+            {"time": 3, "query": "旧指令", "requestId": "c0"},
+        ])),
+    ])
+
+    events = client.fetch_voice_events("d1", "LX06", 3)
+
+    assert events == [{"timestamp": 5, "query": "播放稻香", "request_id": "c1", "source": "conversation"}]
+    assert ("get_latest_ask", ("d1",)) not in service.calls
+    url, kwargs = service.account._session.requests[0]
+    assert "hardware=LX06" in url
+    assert kwargs["cookies"]["deviceId"] == "d1"
+
+
+def test_voice_events_refresh_micoapi_token_once_on_auth_error(tmp_path: Path) -> None:
+    client, service = make_conversation_client(tmp_path, [
+        FakeConversationResponse(401, {"code": 401, "message": "auth failed"}),
+        FakeConversationResponse(200, _conversation_body([{"time": 9, "query": "下一首", "requestId": "c2"}])),
+    ])
+
+    events = client.fetch_voice_events("d1", "LX06", 0)
+
+    assert [event["query"] for event in events] == ["下一首"]
+    assert service.account.logins == ["micoapi"]
+    assert service.account._session.requests[1][1]["cookies"]["serviceToken"] == "refreshed-token"
+
+
+def test_voice_events_persistent_auth_error_raises_without_ubus_fallback(tmp_path: Path) -> None:
+    client, service = make_conversation_client(tmp_path, [
+        FakeConversationResponse(401, {"code": 401, "message": "auth failed"}),
+        FakeConversationResponse(401, {"code": 401, "message": "auth failed"}),
+    ])
+
+    with pytest.raises(MinaAuthError, match="authentication expired"):
+        client.fetch_voice_events("d1", "LX06", 0)
+    assert ("get_latest_ask", ("d1",)) not in service.calls

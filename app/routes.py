@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .config import ConfigError, Settings
 from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient
-from .models import ConfigUpdate, PlayRequest, VoiceRequest, VolumeRequest
+from .models import ConfigUpdate, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
 from .service import PlaybackStateError, TrackNotFoundError
-from .voice import parse_play_command
+from .voice import VoiceIntent, parse_command
 
 router = APIRouter()
 
@@ -72,22 +75,61 @@ def play(payload: PlayRequest, request: Request) -> dict[str, object]:
 
 
 @router.post("/api/voice")
-def voice(payload: VoiceRequest, request: Request) -> dict[str, object]:
-    title = parse_play_command(payload.text)
-    if title is None:
+async def voice(payload: VoiceRequest, request: Request) -> dict[str, object]:
+    parsed = parse_command(payload.text)
+    if parsed is None:
         raise HTTPException(status_code=400, detail="unsupported voice command")
-    matches = request.app.state.service.list_tracks(title)
-    if not matches:
-        raise HTTPException(status_code=404, detail="track not found")
     try:
-        track = request.app.state.service.play(matches[0].id, [item.id for item in matches])
+        results = await request.app.state.voice_worker.dispatch_text(payload.text, raise_errors=True)
     except MinaDeviceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PlaybackStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except MinaClientError as exc:
         raise _mina_failure(exc) from exc
+    if any(item.get("error") == "track not found" for item in results):
+        raise HTTPException(status_code=404, detail="track not found")
+    if parsed.intent is VoiceIntent.PLAY:
+        match = next((item for item in results if item.get("matched_track")), None)
+        if match is None:
+            raise HTTPException(status_code=409, detail="play command was not hijacked")
+        track = request.app.state.service.get_track(match["matched_track"]["id"])
+        response = _queue_response(request)
+        response.update({"command": parsed.query, "status": "playing", "track": track})
+        return response
     response = _queue_response(request)
-    response.update({"command": title, "status": "playing", "track": track})
+    response["command"] = parsed.intent.value
     return response
+
+
+@router.get("/api/voice/status")
+async def voice_status(request: Request) -> dict[str, object]:
+    return await request.app.state.voice_worker.status()
+
+
+@router.post("/api/voice/enable")
+async def voice_enable(payload: VoiceEnableRequest, request: Request) -> dict[str, object]:
+    worker = request.app.state.voice_worker
+    settings: Settings = request.app.state.settings
+    if payload.enabled:
+        if not settings.mina_device_id or not settings.voice.hardware:
+            raise HTTPException(status_code=422, detail="mina_device_id and voice.hardware are required")
+        validator = getattr(request.app.state.mina_client, "validate_voice_device", None)
+        if validator is not None:
+            try:
+                await asyncio.to_thread(validator, settings.mina_device_id, settings.voice.hardware)
+            except MinaClientError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        updated_voice = replace(settings.voice, enabled=payload.enabled)
+        updated = replace(settings, voice=updated_voice)
+        updated.save()
+    except ConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    request.app.state.settings = updated
+    worker.update_runtime(enabled=payload.enabled, device_id=updated.mina_device_id, hardware=updated.voice.hardware, hijack_all_play=updated.voice.hijack_all_play, speak_confirm=updated.voice.speak_confirm, poll_interval_sec=updated.voice.poll_interval_sec)
+    await worker.set_enabled(payload.enabled)
+    return await worker.status()
 
 
 @router.get("/api/config")
@@ -103,25 +145,43 @@ def get_config(request: Request) -> dict[str, object]:
         "xiaomi_password": "********" if settings.xiaomi_password else None,
         "mina_mode": settings.mina_mode,
         "mina_device_id": settings.mina_device_id,
+        "voice": {
+            "enabled": settings.voice.enabled,
+            "poll_interval_sec": settings.voice.poll_interval_sec,
+            "hijack_all_play": settings.voice.hijack_all_play,
+            "speak_confirm": settings.voice.speak_confirm,
+            "hardware": settings.voice.hardware,
+        },
     }
 
 
 @router.put("/api/config")
-def update_config(payload: ConfigUpdate, request: Request) -> dict[str, object]:
+async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, object]:
     old: Settings = request.app.state.settings
     password = old.xiaomi_password if payload.xiaomi_password in (None, "********") else payload.xiaomi_password
-    values = {
-        "music_root": payload.music_root if payload.music_root is not None else old.music_root,
-        "config_dir": old.config_dir,
-        "host": payload.host if payload.host is not None else old.host,
-        "port": payload.port if payload.port is not None else old.port,
-        "public_base_url": payload.public_base_url if payload.public_base_url is not None else old.public_base_url,
-        "xiaomi_user": payload.xiaomi_user if payload.xiaomi_user is not None else old.xiaomi_user,
-        "xiaomi_password": password,
-        "mina_mode": payload.mina_mode if payload.mina_mode is not None else old.mina_mode,
-        "mina_device_id": payload.mina_device_id if payload.mina_device_id is not None else old.mina_device_id,
-    }
     try:
+        voice = old.voice
+        if payload.voice is not None:
+            voice = replace(
+                voice,
+                enabled=payload.voice.enabled if payload.voice.enabled is not None else voice.enabled,
+                poll_interval_sec=payload.voice.poll_interval_sec if payload.voice.poll_interval_sec is not None else voice.poll_interval_sec,
+                hijack_all_play=payload.voice.hijack_all_play if payload.voice.hijack_all_play is not None else voice.hijack_all_play,
+                speak_confirm=payload.voice.speak_confirm if payload.voice.speak_confirm is not None else voice.speak_confirm,
+                hardware=payload.voice.hardware if payload.voice.hardware is not None else voice.hardware,
+            )
+        values = {
+            "music_root": payload.music_root if payload.music_root is not None else old.music_root,
+            "config_dir": old.config_dir,
+            "host": payload.host if payload.host is not None else old.host,
+            "port": payload.port if payload.port is not None else old.port,
+            "public_base_url": payload.public_base_url if payload.public_base_url is not None else old.public_base_url,
+            "xiaomi_user": payload.xiaomi_user if payload.xiaomi_user is not None else old.xiaomi_user,
+            "xiaomi_password": password,
+            "mina_mode": payload.mina_mode if payload.mina_mode is not None else old.mina_mode,
+            "mina_device_id": payload.mina_device_id if payload.mina_device_id is not None else old.mina_device_id,
+            "voice": voice,
+        }
         updated = Settings(**values)
         updated.save()
     except ConfigError as exc:
@@ -141,6 +201,24 @@ def update_config(payload: ConfigUpdate, request: Request) -> dict[str, object]:
         client.update_credentials(updated.xiaomi_user, updated.xiaomi_password)
     if isinstance(client, MockMinaClient):
         client.device_id = updated.mina_device_id or "mock-device"
+    worker = getattr(request.app.state, "voice_worker", None)
+    if worker is not None:
+        source = getattr(worker, "source", None)
+        if hasattr(source, "mina_client"):
+            source.mina_client = client
+            source.device_id = updated.mina_device_id
+            source.hardware = updated.voice.hardware
+        worker.update_runtime(
+            mina_client=client,
+            device_id=updated.mina_device_id,
+            hardware=updated.voice.hardware,
+            enabled=updated.voice.enabled,
+            hijack_all_play=updated.voice.hijack_all_play,
+            speak_confirm=updated.voice.speak_confirm,
+            poll_interval_sec=updated.voice.poll_interval_sec,
+        )
+        if updated.voice.enabled != old.voice.enabled:
+            await worker.set_enabled(updated.voice.enabled)
     response = get_config(request)
     # 这些字段只在进程启动时被消费，运行时修改需重启才生效。
     response["restart_required"] = any(
@@ -237,3 +315,10 @@ def volume(payload: VolumeRequest, request: Request) -> dict[str, object]:
     except MinaClientError as exc:
         raise _mina_failure(exc) from exc
     return _queue_response(request)
+
+
+@router.get("/api/logs")
+async def logs(request: Request, limit: int | None = None) -> dict[str, object]:
+    if limit is not None and limit < 1:
+        raise HTTPException(status_code=422, detail="limit must be positive")
+    return {"logs": await request.app.state.voice_worker.log.snapshot(limit)}
