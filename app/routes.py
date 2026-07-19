@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .config import ConfigError, Settings
-from .cookie_login import CookieParseError, build_token, parse_credentials, write_token_file
+from .cookie_login import COOKIE_AUTH_SOURCE, CookieParseError, build_token, parse_credentials, write_token_file
 from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient
 from .models import ConfigUpdate, CookieLoginRequest, OtpSubmitRequest, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
 from .service import PlaybackStateError, TrackNotFoundError
@@ -289,7 +289,7 @@ def login_cookies(payload: CookieLoginRequest, request: Request) -> dict[str, ob
             "deviceId": payload.device_id,
         }
         fields.update({key: value for key, value in explicit.items() if value})
-        token = build_token(fields)
+        token = build_token(fields, auth_source=COOKIE_AUTH_SOURCE)
     except CookieParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     token_path = Path(getattr(client, "token_path", Path(settings.config_dir) / ".mi.token"))
@@ -304,7 +304,7 @@ def login_cookies(payload: CookieLoginRequest, request: Request) -> dict[str, ob
             token_path.chmod(0o600)
         else:
             token_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=401, detail=f"Cookies 无效或已过期：{exc}") from exc
+        raise HTTPException(status_code=401, detail=f"Cookies 无效或已过期，请重新获取并粘贴：{exc}") from exc
     return {
         "status": "success",
         "devices": [{"id": item.id, "name": item.name} for item in listed],
