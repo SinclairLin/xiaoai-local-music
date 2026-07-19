@@ -54,10 +54,24 @@ class MinaClient(Protocol):
 
 async def _otp_unavailable(otp_method: str) -> str:
     raise MinaAuthError(
-        "小米账号需 OTP 验证，服务进程内无法交互；"
-        "请在宿主机设置 MI_USER/MI_PASS 后执行 `python -m miservice mina` 完成登录，"
-        "再将 ~/.mi.token 复制到 config_dir"
+        "小米账号需 OTP 验证：请到管理台「账号与设备」页点击「保存并登录」，"
+        "在页面内输入验证码完成登录（无头场景可按 README 在宿主机预登录后拷贝 .mi.token）"
     )
+
+
+def parse_device_list(devices: Any) -> list[MinaDevice]:
+    """Map a raw miservice ``device_list`` payload to ``MinaDevice`` entries."""
+    result: list[MinaDevice] = []
+    for device in devices or []:
+        if not isinstance(device, dict):
+            continue
+        raw_id = device.get("deviceID") or device.get("miotDID")
+        if raw_id is None:
+            continue
+        device_id = str(raw_id)
+        name = device.get("alias") or device.get("name") or device_id
+        result.append(MinaDevice(id=device_id, name=str(name)))
+    return result
 
 
 class MinaMiserviceClient:
@@ -132,20 +146,7 @@ class MinaMiserviceClient:
         self.password = password
 
     def list_devices(self) -> list[MinaDevice]:
-        devices = self._run(lambda service: service.device_list())
-        if devices is None:
-            return []
-        result: list[MinaDevice] = []
-        for device in devices:
-            if not isinstance(device, dict):
-                continue
-            raw_id = device.get("deviceID") or device.get("miotDID")
-            if raw_id is None:
-                continue
-            device_id = str(raw_id)
-            name = device.get("alias") or device.get("name") or device_id
-            result.append(MinaDevice(id=device_id, name=str(name)))
-        return result
+        return parse_device_list(self._run(lambda service: service.device_list()))
 
     def text_to_speech(self, text: str, device_id: str) -> Any:
         return self._run(lambda service: service.text_to_speech(device_id, text))

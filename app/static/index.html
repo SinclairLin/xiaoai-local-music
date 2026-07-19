@@ -431,6 +431,15 @@ svg.ic { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.7; fil
         <input type="password" id="accPass" autocomplete="current-password" placeholder="未设置">
         <span class="field-help">修改账号或密码保存后会自动删除旧 token，下次调用重新登录。</span>
       </div>
+      <div class="field" id="otpRow" style="display:none;" data-od-id="otp-row">
+        <label for="otpCode">验证码</label>
+        <input type="text" id="otpCode" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位验证码">
+        <span class="field-help" id="otpHint"></span>
+        <div class="actions">
+          <button class="btn btn-primary" id="btnOtpSubmit" data-od-id="otp-submit-btn">提交验证码</button>
+          <button class="btn" id="btnOtpCancel" data-od-id="otp-cancel-btn">取消登录</button>
+        </div>
+      </div>
       <div class="actions">
         <button class="btn btn-primary" id="btnLogin" data-od-id="login-btn">保存并登录</button>
         <button class="btn btn-danger" id="btnClearToken" data-od-id="clear-token-btn">清除 token</button>
@@ -663,10 +672,22 @@ async function saveConfig() {
 }
 
 /* ── Account / login / token ── */
+let loginPollGen = 0;
+function resetLoginUi() {
+  loginPollGen++;
+  $("otpRow").style.display = "none";
+  $("otpCode").value = "";
+  $("otpCode").disabled = false;
+  $("btnOtpSubmit").disabled = false;
+  const btn = $("btnLogin");
+  btn.disabled = false; btn.textContent = "保存并登录";
+}
 async function saveAndLogin() {
   const btn = $("btnLogin");
   btn.disabled = true; btn.textContent = "登录中…";
-  const payload = { mina_mode: $("modeMi").checked ? "miservice" : "mock" };
+  $("otpRow").style.display = "none";
+  const mock = $("modeMock").checked;
+  const payload = { mina_mode: mock ? "mock" : "miservice" };
   const user = $("accUser").value.trim();
   const pass = $("accPass").value;
   if (user) payload.xiaomi_user = user;
@@ -674,23 +695,79 @@ async function saveAndLogin() {
   try {
     state.cfg = await api("api/config", { method: "PUT", body: payload });
     renderConfig();
-    const res = await api("api/devices");
-    applyDevices(res);
-    note("accNote", "登录成功，账号下共 " + res.devices.length + " 台设备，已在「音箱设备」卡片列出。", "info");
-    toast("小米登录成功", "ok");
+    if (mock) {
+      const res = await api("api/devices");
+      applyDevices(res);
+      note("accNote", "mock 模式无需登录，已列出模拟设备。", "info");
+      resetLoginUi();
+      return;
+    }
+    try {
+      await api("api/login", { method: "POST", body: {} });
+    } catch (e) {
+      if (e.status !== 409) throw e; // 409 = 会话已在跑，直接进入轮询
+    }
+    pollLoginStatus();
   } catch (e) {
-    note("accNote", "登录失败：" + esc(e.message) + (e.status === 502 ? "<br>若提示需要 OTP 验证，请按 README 在宿主机预登录后将 .mi.token 复制到 config 目录。" : ""), "err");
-  } finally { btn.disabled = false; btn.textContent = "保存并登录"; }
+    note("accNote", "登录失败：" + esc(e.message), "err");
+    resetLoginUi();
+  }
+}
+async function pollLoginStatus() {
+  const gen = ++loginPollGen;
+  while (gen === loginPollGen) {
+    let st;
+    try { st = await api("api/login/status"); }
+    catch { await new Promise((r) => setTimeout(r, 1500)); continue; }
+    if (st.status === "otp_required") {
+      $("otpRow").style.display = "";
+      $("otpHint").textContent = st.otp_method === "Email"
+        ? "验证码已发送到账号绑定邮箱"
+        : "验证码已通过短信发送到账号绑定手机";
+      note("accNote", "小米风控要求验证，请输入验证码（5 分钟内有效）。", "warn");
+    } else if (st.status === "success") {
+      loginPollGen++;
+      try { applyDevices(await api("api/devices")); } catch {}
+      const count = (st.devices || state.devices || []).length;
+      note("accNote", "登录成功，账号下共 " + count + " 台设备，已在「音箱设备」卡片列出。", "info");
+      toast("小米登录成功", "ok");
+      resetLoginUi();
+      return;
+    } else if (st.status === "failed" || st.status === "idle") {
+      loginPollGen++;
+      note("accNote", "登录失败：" + esc(st.error || "未知错误") + "<br>重新点「保存并登录」可重试；若刚才已发过验证码，重试会重新发送一条。", "err");
+      resetLoginUi();
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+async function submitOtp() {
+  const code = $("otpCode").value.trim();
+  if (!code) { toast("请输入验证码", "err"); return; }
+  $("btnOtpSubmit").disabled = true;
+  $("otpCode").disabled = true;
+  try {
+    await api("api/login/otp", { method: "POST", body: { code } });
+    note("accNote", "验证码已提交，正在验证…", "info");
+  } catch (e) {
+    note("accNote", "提交失败：" + esc(e.message), "err");
+    $("btnOtpSubmit").disabled = false;
+    $("otpCode").disabled = false;
+  }
+}
+async function cancelLogin() {
+  try { await api("api/login/cancel", { method: "POST", body: {} }); } catch {}
+  note("accNote", "已取消登录。", "info");
+  resetLoginUi();
 }
 async function clearToken() {
   try {
-    await api("api/token/clear", { method: "POST", body: {} });
-    note("accNote", "token 已清除，下次调用将重新登录。", "info");
-    toast("token 已清除", "ok");
+    const res = await api("api/token/clear", { method: "POST", body: {} });
+    note("accNote", res.cleared ? "token 已清除，下次调用将重新登录。" : "没有已保存的 token。", "info");
+    toast(res.cleared ? "token 已清除" : "无 token 可清除", "ok");
   } catch (e) {
-    const dir = (state.cfg && state.cfg.config_dir) || "/config";
-    note("accNote",
-      "服务端暂未提供清除接口（" + esc(e.message) + "）。两个等效做法：<br>· 删除 <span class=\"mono\">" + esc(dir) + "/.mi.token</span> 后重启服务；<br>· 或修改密码后「保存并登录」，凭据变更会自动删除旧 token。", "warn");
+    note("accNote", "清除失败：" + esc(e.message), "err");
   }
 }
 
@@ -915,6 +992,9 @@ $("btnUseOrigin").addEventListener("click", () => {
 });
 $("btnLogin").addEventListener("click", saveAndLogin);
 $("btnClearToken").addEventListener("click", clearToken);
+$("btnOtpSubmit").addEventListener("click", submitOtp);
+$("btnOtpCancel").addEventListener("click", cancelLogin);
+$("otpCode").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submitOtp(); } });
 $("btnDevRefresh").addEventListener("click", () => refreshDevices(false));
 $("deviceList").addEventListener("click", (e) => {
   const row = e.target.closest(".sel-device");

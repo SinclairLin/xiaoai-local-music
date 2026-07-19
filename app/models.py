@@ -51,3 +51,7 @@ class ConfigUpdate(BaseModel):
 
 class VolumeRequest(BaseModel):
     volume: int = Field(ge=0, le=100)
+
+
+class OtpSubmitRequest(BaseModel):
+    code: str = Field(min_length=1)

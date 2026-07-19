@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 
 from .config import ConfigError, Settings
 from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient
-from .models import ConfigUpdate, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
+from .models import ConfigUpdate, OtpSubmitRequest, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
 from .service import PlaybackStateError, TrackNotFoundError
 from .voice import VoiceIntent, parse_command
 
@@ -189,6 +189,14 @@ async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, ob
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     request.app.state.settings = updated
     request.app.state.service.set_device_id(updated.mina_device_id)
+    manager = getattr(request.app.state, "login_manager", None)
+    if manager is not None and (
+        updated.mina_mode != old.mina_mode
+        or updated.xiaomi_user != old.xiaomi_user
+        or updated.xiaomi_password != old.xiaomi_password
+    ):
+        # 模式或凭据变了，进行中的登录会话写回的 token 已无意义，直接作废。
+        manager.cancel()
     client = request.app.state.service.mina_client
     if updated.mina_mode != old.mina_mode:
         client = (
@@ -227,6 +235,52 @@ async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, ob
         for key in ("music_root", "host", "port", "public_base_url")
     )
     return response
+
+
+@router.post("/api/login")
+def login_start(request: Request) -> dict[str, object]:
+    manager = request.app.state.login_manager
+    settings: Settings = request.app.state.settings
+    client = request.app.state.service.mina_client
+    if settings.mina_mode == "mock":
+        if not manager.start_mock(client.list_devices()):
+            raise HTTPException(status_code=409, detail="已有登录会话进行中")
+        return manager.status()
+    if not settings.xiaomi_user or not settings.xiaomi_password:
+        raise HTTPException(status_code=422, detail="请先填写并保存小米账号密码")
+    token_path = getattr(client, "token_path", Path(settings.config_dir) / ".mi.token")
+    if not manager.start(settings.xiaomi_user, settings.xiaomi_password, token_path):
+        raise HTTPException(status_code=409, detail="已有登录会话进行中")
+    return manager.status()
+
+
+@router.get("/api/login/status")
+def login_status(request: Request) -> dict[str, object]:
+    return request.app.state.login_manager.status()
+
+
+@router.post("/api/login/otp")
+def login_otp(payload: OtpSubmitRequest, request: Request) -> dict[str, object]:
+    manager = request.app.state.login_manager
+    if not manager.submit_otp(payload.code.strip()):
+        raise HTTPException(status_code=409, detail="当前没有等待验证码的登录会话")
+    return manager.status()
+
+
+@router.post("/api/login/cancel")
+def login_cancel(request: Request) -> dict[str, object]:
+    manager = request.app.state.login_manager
+    manager.cancel()
+    return manager.status()
+
+
+@router.post("/api/token/clear")
+def token_clear(request: Request) -> dict[str, object]:
+    settings: Settings = request.app.state.settings
+    token_path = Path(settings.config_dir) / ".mi.token"
+    cleared = token_path.is_file()
+    token_path.unlink(missing_ok=True)
+    return {"cleared": cleared}
 
 
 @router.get("/api/devices")
