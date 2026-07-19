@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.login_session import LoginSessionManager
 from app.main import create_app
-from app.mina_client import MinaMiserviceClient, MockMinaClient
+from app.mina_client import MinaDevice, MockMinaClient
 from app.service import MusicService
 from app.voice_worker import VoicePollResult
 
@@ -274,7 +274,7 @@ def test_scan_excludes_symlink_outside_music_root(tmp_path: Path) -> None:
         assert client.get("/api/tracks").json()["tracks"] == []
 
 
-def test_config_update_flags_restart_required_and_rebuilds_client(tmp_path: Path) -> None:
+def test_config_update_flags_restart_required_and_preserves_injected_client(tmp_path: Path) -> None:
     (tmp_path / "track.mp3").touch()
     config_dir = tmp_path / "config"
     settings = Settings(
@@ -290,13 +290,6 @@ def test_config_update_flags_restart_required_and_rebuilds_client(tmp_path: Path
         assert runtime_only.status_code == 200
         assert runtime_only.json()["restart_required"] is False
 
-        switched = client.put("/api/config", json={"mina_mode": "miservice"})
-        assert switched.status_code == 200
-        assert switched.json()["restart_required"] is False
-        assert isinstance(app.state.mina_client, MinaMiserviceClient)
-        assert app.state.service.mina_client is app.state.mina_client
-
-        client.put("/api/config", json={"mina_mode": "mock"})
         assert isinstance(app.state.mina_client, MockMinaClient)
         assert app.state.mina_client.device_id == "device-9"
 
@@ -347,7 +340,7 @@ def _poll_login(client: TestClient, *states: str, attempts: int = 100) -> dict:
     pytest.fail(f"login status never reached {states}: {status}")
 
 
-def test_login_endpoints_in_mock_mode(tmp_path: Path) -> None:
+def test_login_without_credentials_returns_422(tmp_path: Path) -> None:
     (tmp_path / "track.mp3").touch()
     settings = Settings(public_base_url="http://speaker-host:8123", music_dir=tmp_path, mina_device_id="mock-device")
 
@@ -355,14 +348,115 @@ def test_login_endpoints_in_mock_mode(tmp_path: Path) -> None:
         assert client.get("/api/login/status").json()["status"] == "idle"
         assert client.post("/api/login/otp", json={"code": "123456"}).status_code == 409
         response = client.post("/api/login")
+        assert response.status_code == 422
+        assert "账号密码" in response.json()["detail"]
+
+
+def test_devices_without_authentication_do_not_return_mock_device(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    settings = Settings(config_dir=tmp_path / "config", public_base_url="http://speaker-host:8123", music_dir=tmp_path)
+
+    with TestClient(create_app(settings=settings)) as client:
+        response = client.get("/api/devices")
+        assert response.status_code == 502
+        assert "凭据" in response.json()["detail"]
+
+
+def test_devices_auto_select_persists_first_device_when_none_selected(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(config_dir=config_dir, public_base_url="http://speaker-host:8123", music_dir=tmp_path)
+    service = MusicService(tmp_path, settings.public_base_url, mina_client=MockMinaClient("real-1"), device_id=None)
+
+    app = create_app(settings=settings, service=service)
+    with TestClient(app) as client:
+        response = client.get("/api/devices")
         assert response.status_code == 200
-        body = response.json()
-        assert body["status"] == "success"
-        assert body["devices"] == [{"id": "mock-device", "name": "Mock Mina"}]
-        assert client.post("/api/login/cancel").status_code == 200
+        assert response.json()["selected_device_id"] == "real-1"
+        assert app.state.service.device_id == "real-1"
+        assert app.state.settings.mina_device_id == "real-1"
+        assert app.state.voice_worker.device_id == "real-1"
+        assert "real-1" in (config_dir / "config.yaml").read_text(encoding="utf-8")
 
 
-def test_cookie_login_writes_token_and_lists_devices(tmp_path: Path) -> None:
+def test_devices_keep_existing_selection_even_if_absent_from_list(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    settings = Settings(
+        config_dir=config_dir,
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        mina_device_id="stale-device",
+    )
+    service = MusicService(tmp_path, settings.public_base_url, mina_client=MockMinaClient("real-1"), device_id="stale-device")
+
+    app = create_app(settings=settings, service=service)
+    with TestClient(app) as client:
+        response = client.get("/api/devices")
+        assert response.status_code == 200
+        assert response.json()["selected_device_id"] == "stale-device"
+        assert app.state.service.device_id == "stale-device"
+        assert not (config_dir / "config.yaml").exists()
+
+
+def test_devices_auto_select_survives_read_only_config(tmp_path: Path) -> None:
+    (tmp_path / "track.mp3").touch()
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_dir.chmod(0o500)
+    settings = Settings(config_dir=config_dir, public_base_url="http://speaker-host:8123", music_dir=tmp_path)
+    service = MusicService(tmp_path, settings.public_base_url, mina_client=MockMinaClient("real-1"), device_id=None)
+
+    try:
+        app = create_app(settings=settings, service=service)
+        with TestClient(app) as client:
+            response = client.get("/api/devices")
+            assert response.status_code == 200
+            assert response.json()["selected_device_id"] == "real-1"
+            assert app.state.service.device_id == "real-1"
+            assert not (config_dir / "config.yaml").exists()
+    finally:
+        config_dir.chmod(0o700)
+
+
+def test_login_with_saved_credentials_does_not_use_mock_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "track.mp3").touch()
+    settings = Settings(
+        config_dir=tmp_path / "config",
+        public_base_url="http://speaker-host:8123",
+        music_dir=tmp_path,
+        xiaomi_user="user",
+        xiaomi_password="secret",
+    )
+
+    class FakeRealClient:
+        def __init__(self, username, password, config_dir):
+            self.token_path = Path(config_dir) / ".mi.token"
+
+    class FakeLoginManager:
+        def __init__(self):
+            self.started = None
+
+        def start(self, username, password, token_path):
+            self.started = (username, password, Path(token_path))
+            return True
+
+        def status(self):
+            return {"status": "pending", "devices": None}
+
+    monkeypatch.setattr("app.routes.MinaMiserviceClient", FakeRealClient)
+    app = create_app(settings=settings)
+    manager = FakeLoginManager()
+    app.state.login_manager = manager
+
+    with TestClient(app) as client:
+        response = client.post("/api/login")
+        assert response.status_code == 200
+        assert manager.started == ("user", "secret", tmp_path / "config" / ".mi.token")
+        assert not isinstance(app.state.service.mina_client, MockMinaClient)
+
+
+def test_cookie_login_writes_token_and_switches_from_mock_to_real_devices(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
     (tmp_path / "track.mp3").touch()
@@ -371,15 +465,27 @@ def test_cookie_login_writes_token_and_lists_devices(tmp_path: Path) -> None:
         config_dir=config_dir,
         public_base_url="http://speaker-host:8123",
         music_dir=tmp_path,
-        mina_device_id="mock-device",
     )
 
-    with TestClient(create_app(settings=settings, service=MusicService(tmp_path, settings.public_base_url, device_id="mock-device"))) as client:
+    class FakeRealClient:
+        def __init__(self, username, password, config_dir):
+            self.token_path = Path(config_dir) / ".mi.token"
+
+        def list_devices(self):
+            return [MinaDevice(id="real-device", name="客厅音箱")]
+
+    monkeypatch.setattr("app.routes.MinaMiserviceClient", FakeRealClient)
+
+    with TestClient(create_app(settings=settings)) as client:
         response = client.post("/api/login/cookies", json={"cookies": "userId=123; serviceToken=tok; ssecurity=sec"})
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "success"
-        assert body["devices"] == [{"id": "mock-device", "name": "Mock Mina"}]
+        assert body["devices"] == [{"id": "real-device", "name": "客厅音箱"}]
+        assert body["devices"] != [{"id": "mock-device", "name": "Mock Mina"}]
+        # 选择同步集中在 GET /api/devices（前端登录成功后立即拉取）。
+        assert client.get("/api/devices").json()["selected_device_id"] == "real-device"
+        assert "real-device" in (config_dir / "config.yaml").read_text(encoding="utf-8")
         token = json.loads((config_dir / ".mi.token").read_text())
         assert token["userId"] == 123
         assert token["micoapi"] == ["sec", "tok"]
@@ -428,13 +534,12 @@ def test_cookie_login_rolls_back_token_on_invalid_credentials(tmp_path: Path) ->
         assert '"old"' in token_path.read_text()
 
 
-def test_login_requires_saved_credentials_in_miservice_mode(tmp_path: Path) -> None:
+def test_login_without_credentials_in_real_flow_returns_422(tmp_path: Path) -> None:
     (tmp_path / "track.mp3").touch()
     settings = Settings(
         config_dir=tmp_path / "config",
         public_base_url="http://speaker-host:8123",
         music_dir=tmp_path,
-        mina_mode="miservice",
     )
 
     with TestClient(create_app(settings=settings)) as client:
@@ -449,7 +554,6 @@ def test_login_otp_http_flow(tmp_path: Path) -> None:
         config_dir=tmp_path / "config",
         public_base_url="http://speaker-host:8123",
         music_dir=tmp_path,
-        mina_mode="miservice",
         xiaomi_user="user",
         xiaomi_password="secret",
     )
@@ -477,7 +581,6 @@ def test_config_update_cancels_active_login_session(tmp_path: Path) -> None:
         config_dir=tmp_path / "config",
         public_base_url="http://speaker-host:8123",
         music_dir=tmp_path,
-        mina_mode="miservice",
         xiaomi_user="user",
         xiaomi_password="secret",
     )

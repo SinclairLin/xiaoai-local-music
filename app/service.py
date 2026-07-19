@@ -59,7 +59,12 @@ class MusicService:
         self._entries: tuple[_TrackEntry, ...] | None = None
         self._entries_by_id: dict[str, _TrackEntry] = {}
         self.mina_client = mina_client or MockMinaClient(device_id)
-        self.device_id = device_id or ("mock-device" if isinstance(self.mina_client, MockMinaClient) else None)
+        # Omitting the client is a test convenience; only then adopt the
+        # implicit mock's device so an injected client never observes a
+        # fabricated selection.
+        if device_id is None and mina_client is None:
+            device_id = self.mina_client.device_id
+        self.device_id = device_id
         self._queue: tuple[Track, ...] = ()
         self._current_index: int | None = None
         self._state = "idle"

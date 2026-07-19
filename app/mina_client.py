@@ -1,4 +1,4 @@
-"""Injectable Mina clients backed by the miservice library or a local mock."""
+"""Mina client backed by miservice, plus an injectable local test double."""
 
 from __future__ import annotations
 

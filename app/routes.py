@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 
 from .config import ConfigError, Settings
 from .cookie_login import COOKIE_AUTH_SOURCE, CookieParseError, build_token, parse_credentials, write_token_file
-from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient, MockMinaClient
+from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient
 from .models import ConfigUpdate, CookieLoginRequest, OtpSubmitRequest, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
 from .service import PlaybackStateError, TrackNotFoundError
 from .voice import VoiceIntent, parse_command
@@ -19,6 +19,39 @@ from .voice import VoiceIntent, parse_command
 router = APIRouter()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def _bind_mina_client(request: Request, client: object, *, device_id: str | None = None) -> None:
+    """Replace the runtime Mina client everywhere that can issue requests.
+
+    Keeping this binding in one place prevents the API, playback service, and
+    voice worker from observing different clients after an interactive login.
+    """
+    service = request.app.state.service
+    service.mina_client = client
+    if device_id is not None:
+        service.set_device_id(device_id)
+    request.app.state.mina_client = client
+
+    worker = getattr(request.app.state, "voice_worker", None)
+    if worker is None:
+        return
+    source = getattr(worker, "source", None)
+    if hasattr(source, "mina_client"):
+        source.mina_client = client
+        if device_id is not None:
+            source.device_id = device_id
+    worker.update_runtime(mina_client=client, device_id=device_id)
+
+
+def _activate_real_mina(request: Request, settings: Settings) -> MinaMiserviceClient:
+    """Switch an injected/test client to the token-backed MiNA client."""
+    client = request.app.state.service.mina_client
+    if isinstance(client, MinaMiserviceClient):
+        return client
+    client = MinaMiserviceClient(settings.xiaomi_user, settings.xiaomi_password, settings.config_dir)
+    _bind_mina_client(request, client, device_id=settings.mina_device_id)
+    return client
 
 
 @router.get("/", response_class=FileResponse)
@@ -145,7 +178,6 @@ def get_config(request: Request) -> dict[str, object]:
         "public_base_url": settings.public_base_url,
         "xiaomi_user": settings.xiaomi_user,
         "xiaomi_password": "********" if settings.xiaomi_password else None,
-        "mina_mode": settings.mina_mode,
         "mina_device_id": settings.mina_device_id,
         "voice": {
             "enabled": settings.voice.enabled,
@@ -180,7 +212,6 @@ async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, ob
             "public_base_url": payload.public_base_url if payload.public_base_url is not None else old.public_base_url,
             "xiaomi_user": payload.xiaomi_user if payload.xiaomi_user is not None else old.xiaomi_user,
             "xiaomi_password": password,
-            "mina_mode": payload.mina_mode if payload.mina_mode is not None else old.mina_mode,
             "mina_device_id": payload.mina_device_id if payload.mina_device_id is not None else old.mina_device_id,
             "voice": voice,
         }
@@ -192,25 +223,18 @@ async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, ob
     request.app.state.service.set_device_id(updated.mina_device_id)
     manager = getattr(request.app.state, "login_manager", None)
     if manager is not None and (
-        updated.mina_mode != old.mina_mode
-        or updated.xiaomi_user != old.xiaomi_user
+        updated.xiaomi_user != old.xiaomi_user
         or updated.xiaomi_password != old.xiaomi_password
     ):
-        # 模式或凭据变了，进行中的登录会话写回的 token 已无意义，直接作废。
+        # 凭据变了，进行中的登录会话写回的 token 已无意义，直接作废。
         manager.cancel()
     client = request.app.state.service.mina_client
-    if updated.mina_mode != old.mina_mode:
-        client = (
-            MockMinaClient(updated.mina_device_id)
-            if updated.mina_mode == "mock"
-            else MinaMiserviceClient(updated.xiaomi_user, updated.xiaomi_password, updated.config_dir)
-        )
-        request.app.state.service.mina_client = client
-        request.app.state.mina_client = client
-    elif hasattr(client, "update_credentials"):
+    if hasattr(client, "update_credentials"):
         client.update_credentials(updated.xiaomi_user, updated.xiaomi_password)
-    if isinstance(client, MockMinaClient):
-        client.device_id = updated.mina_device_id or "mock-device"
+    # Keep an injected local test double aligned with the selected ID.  The
+    # production MiNA client does not expose a mutable device_id field.
+    if hasattr(client, "device_id") and updated.mina_device_id:
+        client.device_id = updated.mina_device_id
     worker = getattr(request.app.state, "voice_worker", None)
     if worker is not None:
         source = getattr(worker, "source", None)
@@ -242,13 +266,9 @@ async def update_config(payload: ConfigUpdate, request: Request) -> dict[str, ob
 def login_start(request: Request) -> dict[str, object]:
     manager = request.app.state.login_manager
     settings: Settings = request.app.state.settings
-    client = request.app.state.service.mina_client
-    if settings.mina_mode == "mock":
-        if not manager.start_mock(client.list_devices()):
-            raise HTTPException(status_code=409, detail="已有登录会话进行中")
-        return manager.status()
     if not settings.xiaomi_user or not settings.xiaomi_password:
         raise HTTPException(status_code=422, detail="请先填写并保存小米账号密码")
+    client = _activate_real_mina(request, settings)
     token_path = getattr(client, "token_path", Path(settings.config_dir) / ".mi.token")
     if not manager.start(settings.xiaomi_user, settings.xiaomi_password, token_path):
         raise HTTPException(status_code=409, detail="已有登录会话进行中")
@@ -279,6 +299,15 @@ def login_cookies(payload: CookieLoginRequest, request: Request) -> dict[str, ob
         raise HTTPException(status_code=409, detail="已有登录会话进行中，请先取消")
     settings: Settings = request.app.state.settings
     client = request.app.state.service.mina_client
+    # Cookies are always a real MiNA credential.  Validate them with a
+    # token-backed client even when a test injected a local client; writing a
+    # real token must never be followed by a mock device lookup.
+    switch_to_real = not isinstance(client, MinaMiserviceClient)
+    auth_client = (
+        MinaMiserviceClient(settings.xiaomi_user, settings.xiaomi_password, settings.config_dir)
+        if switch_to_real
+        else client
+    )
     try:
         fields = parse_credentials(payload.cookies or "") if payload.cookies else {}
         explicit = {
@@ -292,11 +321,11 @@ def login_cookies(payload: CookieLoginRequest, request: Request) -> dict[str, ob
         token = build_token(fields, auth_source=COOKIE_AUTH_SOURCE)
     except CookieParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    token_path = Path(getattr(client, "token_path", Path(settings.config_dir) / ".mi.token"))
+    token_path = Path(getattr(auth_client, "token_path", Path(settings.config_dir) / ".mi.token"))
     backup = token_path.read_bytes() if token_path.is_file() else None
     write_token_file(token_path, token)
     try:
-        listed = client.list_devices()
+        listed = auth_client.list_devices()
     except MinaClientError as exc:
         # 新凭证不可用则回滚，避免把原本还能用的 token 覆盖掉。
         if backup is not None:
@@ -305,6 +334,12 @@ def login_cookies(payload: CookieLoginRequest, request: Request) -> dict[str, ob
         else:
             token_path.unlink(missing_ok=True)
         raise HTTPException(status_code=401, detail=f"Cookies 无效或已过期，请重新获取并粘贴：{exc}") from exc
+    if switch_to_real:
+        # The pasted cookies proved valid against the real MiNA endpoint, so
+        # playback, API and voice polling must use the token-backed client
+        # from now on.  Device selection stays in GET /api/devices, which the
+        # management UI fetches right after this call.
+        _bind_mina_client(request, auth_client, device_id=settings.mina_device_id)
     return {
         "status": "success",
         "devices": [{"id": item.id, "name": item.name} for item in listed],
@@ -333,9 +368,26 @@ def devices(request: Request) -> dict[str, object]:
         listed = request.app.state.service.mina_client.list_devices()
     except MinaClientError as exc:
         raise _mina_failure(exc) from exc
+    selected = request.app.state.service.device_id
+    if listed and selected is None:
+        # First use without a configured device: adopt the first real one so
+        # playback and voice polling work out of the box.  An existing
+        # selection is never overridden here — the selected device may only be
+        # missing from a transient upstream list; switching is the user's call.
+        selected = listed[0].id
+        settings = replace(request.app.state.settings, mina_device_id=selected)
+        try:
+            settings.save()
+        except ConfigError:
+            # The live device list is still useful on a read-only config
+            # mount; keep the selection in memory and let the next explicit
+            # config update retry persistence.
+            pass
+        request.app.state.settings = settings
+        _bind_mina_client(request, request.app.state.service.mina_client, device_id=selected)
     return {
         "devices": [{"id": item.id, "name": item.name} for item in listed],
-        "selected_device_id": request.app.state.service.device_id,
+        "selected_device_id": selected,
     }
 
 
