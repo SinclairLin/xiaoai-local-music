@@ -313,6 +313,27 @@ def test_voice_events_without_persisted_token_still_login(tmp_path: Path) -> Non
     assert service.account.logins == ["micoapi"]
 
 
+def test_voice_events_persisted_token_missing_micoapi_triggers_login(tmp_path: Path) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({"userId": "u1", "passToken": "pass-token"}),
+        encoding="utf-8",
+    )
+    session = FakeConversationSession([
+        FakeConversationResponse(200, _conversation_body([
+            {"time": 5, "query": "播放稻香", "requestId": "c1"},
+        ])),
+    ])
+    service = FakeMiNAService(devices=[])
+    service.account = FakeAccount(session, None, MiTokenStore(str(token_path)))
+    client = make_client(tmp_path, service)
+
+    events = client.fetch_voice_events("d1", "LX06", 0)
+
+    assert [event["query"] for event in events] == ["播放稻香"]
+    assert service.account.logins == ["micoapi"]
+
+
 def test_voice_events_refresh_micoapi_token_once_on_auth_error(tmp_path: Path) -> None:
     client, service = make_conversation_client(tmp_path, [
         FakeConversationResponse(401, {"code": 401, "message": "auth failed"}),

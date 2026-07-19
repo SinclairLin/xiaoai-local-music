@@ -224,7 +224,10 @@ class MinaMiserviceClient:
         # request can send another password/OTP login despite .mi.token.
         if account.token is None and account.token_store is not None:
             account.token = await account.token_store.load_token()
-        if not account.token:
+        # Mirror MiAccount.mi_request(): a persisted token from another sid
+        # (userId/passToken without "micoapi") must still go through login to
+        # exchange the passToken for a micoapi serviceToken.
+        if not account.token or "micoapi" not in account.token:
             await account.login("micoapi")
         token = account.token or {}
         if "micoapi" not in token:
