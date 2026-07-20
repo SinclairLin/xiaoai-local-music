@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from miservice import MiTokenStore
+from miservice import MiAccount, MiTokenStore
 
 from app.mina_client import (
     MinaAuthError,
@@ -15,6 +15,7 @@ from app.mina_client import (
     _CookieTokenAccount,
     _otp_unavailable,
 )
+from app.cookie_login import COOKIE_AUTH_SOURCE, COOKIE_MINA_EXCHANGE_REQUIRED
 
 
 class FakeMiNAService:
@@ -382,6 +383,19 @@ class FakeMiRequestResponse:
         return "auth failed"
 
 
+class FakeMiRequestSuccessResponse:
+    status = 200
+
+    async def __aenter__(self) -> "FakeMiRequestSuccessResponse":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+    async def json(self, content_type: str | None = None) -> dict[str, int]:
+        return {"code": 0}
+
+
 class FakeMiRequestSession:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
@@ -389,6 +403,12 @@ class FakeMiRequestSession:
     def request(self, method: str, url: str, **kwargs: Any) -> FakeMiRequestResponse:
         self.calls.append((method, url, kwargs))
         return FakeMiRequestResponse()
+
+
+class FakeSuccessfulMiRequestSession(FakeMiRequestSession):
+    def request(self, method: str, url: str, **kwargs: Any) -> FakeMiRequestSuccessResponse:
+        self.calls.append((method, url, kwargs))
+        return FakeMiRequestSuccessResponse()
 
 
 def test_cookie_token_account_preserves_token_and_skips_password_login(tmp_path: Path) -> None:
@@ -435,6 +455,51 @@ def test_cookie_token_account_login_loads_stored_token_without_requests(tmp_path
     # token 中不存在的 sid 只报失败，绝不发起账号请求（不触发 OTP）。
     assert asyncio.run(account.login("passportapi")) is False
     assert session.calls == []
+
+
+def test_cookie_token_account_exchanges_account_cookie_for_mina_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({
+            "deviceId": "BROWSERDEVICE",
+            "userId": 1,
+            "passToken": "passport-token",
+            "micoapi": ["", "account-service-token"],
+            "_auth_source": COOKIE_AUTH_SOURCE,
+            COOKIE_MINA_EXCHANGE_REQUIRED: True,
+        }),
+        encoding="utf-8",
+    )
+    session = FakeSuccessfulMiRequestSession()
+    exchanged: list[str] = []
+
+    async def exchange(self: MiAccount, sid: str) -> bool:
+        exchanged.append(sid)
+        self.token[sid] = ["mina-ssecurity", "mina-service-token"]
+        if self.token_store:
+            await self.token_store.save_token(self.token)
+        return True
+
+    monkeypatch.setattr(MiAccount, "login", exchange)
+    account = _CookieTokenAccount(
+        session,
+        None,
+        None,
+        token_store=str(token_path),
+        otp_callback=_otp_unavailable,
+    )
+
+    asyncio.run(account.mi_request("micoapi", "https://api2.mina.mi.com/test", None, {}))
+
+    assert exchanged == ["micoapi"]
+    assert account.token["micoapi"][1] == "mina-service-token"
+    assert COOKIE_MINA_EXCHANGE_REQUIRED not in account.token
+    persisted = json.loads(token_path.read_text(encoding="utf-8"))
+    assert persisted["micoapi"][1] == "mina-service-token"
+    assert COOKIE_MINA_EXCHANGE_REQUIRED not in persisted
+    assert session.calls[0][2]["cookies"]["serviceToken"] == "mina-service-token"
 
 
 def test_voice_events_cookie_account_loads_stored_token(tmp_path: Path) -> None:

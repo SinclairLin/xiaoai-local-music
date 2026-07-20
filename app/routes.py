@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .config import ConfigError, Settings
-from .cookie_login import COOKIE_AUTH_SOURCE, CookieParseError, build_token, parse_credentials, write_token_file
+from .cookie_login import COOKIE_AUTH_SOURCE, COOKIE_MINA_EXCHANGE_REQUIRED, CookieParseError, build_token, parse_credentials, write_token_file
 from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient
 from .models import ConfigUpdate, CookieLoginRequest, OtpSubmitRequest, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
 from .service import PlaybackStateError, TrackNotFoundError
@@ -319,6 +319,12 @@ def login_cookies(payload: CookieLoginRequest, request: Request) -> dict[str, ob
         }
         fields.update({key: value for key, value in explicit.items() if value})
         token = build_token(fields, auth_source=COOKIE_AUTH_SOURCE)
+        # A browser cookie copied from account.xiaomi.com contains a passport
+        # serviceToken.  Exchange it through passToken for the sid-specific
+        # Mina token before device_list validation; a captured api2.mina.mi.com
+        # cookie without passToken can continue to use its existing token.
+        if fields.get("passToken"):
+            token[COOKIE_MINA_EXCHANGE_REQUIRED] = True
     except CookieParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     token_path = Path(getattr(auth_client, "token_path", Path(settings.config_dir) / ".mi.token"))

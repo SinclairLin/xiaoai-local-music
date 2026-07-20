@@ -13,7 +13,7 @@ from typing import Any, AsyncContextManager, Awaitable, Callable, Protocol
 
 from miservice import MiAccount, MiNAService, MiTokenStore
 
-from .cookie_login import COOKIE_AUTH_SOURCE
+from .cookie_login import COOKIE_AUTH_SOURCE, COOKIE_MINA_EXCHANGE_REQUIRED
 
 
 class MinaClientError(RuntimeError):
@@ -68,7 +68,8 @@ class _CookieTokenAccount(MiAccount):
     retries through ``login()``, which can trigger the account's OTP flow. A
     token obtained from the Cookies form must remain token-only so an expired
     cookie is reported to that form instead of sending another SMS. ``login``
-    only loads the stored token and never contacts the account service.
+    only loads the stored token, except for the one-time passToken exchange
+    explicitly marked for browser cookies.
     """
 
     async def login(self, sid: str) -> bool:
@@ -76,12 +77,26 @@ class _CookieTokenAccount(MiAccount):
         # 这里必须自行加载，否则粘贴的有效 token 永远不可见。
         if self.token is None and self.token_store is not None:
             self.token = await self.token_store.load_token()
+        if self.token and self.token.get(COOKIE_MINA_EXCHANGE_REQUIRED):
+            # A browser cookie's serviceToken belongs to the account service,
+            # not necessarily to Mina.  Reuse its passToken to obtain a
+            # service token scoped to the requested sid.  MiAccount.login()
+            # uses the persisted userId/passToken cookies and keeps the
+            # operation token-only (no password or OTP fallback).
+            self.token.pop("micoapi", None)
+            self.token.pop(COOKIE_MINA_EXCHANGE_REQUIRED, None)
+            return bool(await super().login(sid))
         if self.token and sid in self.token:
             return True
         self._login_error = "Cookies token is unavailable or expired"
         return False
 
     async def mi_request(self, sid: str, url: str, data: Any, headers: dict[str, Any], relogin: bool = True) -> Any:
+        if self.token is None and self.token_store is not None:
+            self.token = await self.token_store.load_token()
+        if self.token and self.token.get(COOKIE_MINA_EXCHANGE_REQUIRED):
+            if not await self.login(sid):
+                raise Exception(f"Login failed: {self._login_error or 'unknown error'}")
         return await super().mi_request(sid, url, data, headers, relogin=False)
 
 
@@ -227,7 +242,11 @@ class MinaMiserviceClient:
         # Mirror MiAccount.mi_request(): a persisted token from another sid
         # (userId/passToken without "micoapi") must still go through login to
         # exchange the passToken for a micoapi serviceToken.
-        if not account.token or "micoapi" not in account.token:
+        if (
+            not account.token
+            or "micoapi" not in account.token
+            or account.token.get(COOKIE_MINA_EXCHANGE_REQUIRED)
+        ):
             await account.login("micoapi")
         token = account.token or {}
         if "micoapi" not in token:
