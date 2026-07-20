@@ -3,12 +3,14 @@
 Accepted input formats:
 
 * Cookie string or a copied ``Cookie:`` request header, e.g.
-  ``userId=123; serviceToken=xxx; deviceId=ABC...``
+  ``userId=123; serviceToken=xxx; passToken=V1:...; deviceId=ABC...``
 * A full ``.mi.token`` JSON document copied from another machine
 * A flat JSON object with ``userId``/``serviceToken`` keys
 
-Only ``userId`` and the ``micoapi`` serviceToken are required for MiNA
-calls; ``ssecurity``/``passToken``/``deviceId`` are kept when provided.
+Only ``userId`` and a serviceToken are required for direct MiNA cookies;
+``ssecurity``/``passToken``/``deviceId`` are kept when provided. Cookies copied
+from ``account.xiaomi.com`` should include ``passToken`` so the client can
+exchange the account token for a serviceToken scoped to ``micoapi``.
 """
 
 from __future__ import annotations
@@ -40,6 +42,10 @@ _FIELD_ALIASES = {
 }
 
 COOKIE_AUTH_SOURCE = "cookies"
+# Browser cookies from account.xiaomi.com carry a passport serviceToken.  When
+# a passToken is also present, it must be exchanged for the sid-specific
+# micoapi serviceToken before calling api2.mina.mi.com.
+COOKIE_MINA_EXCHANGE_REQUIRED = "_mina_cookie_exchange_required"
 
 
 def _normalize_key(key: str) -> str | None:
@@ -100,7 +106,11 @@ def parse_credentials(raw: str) -> dict[str, str]:
 
 def build_token(fields: dict[str, str], *, auth_source: str | None = None) -> dict[str, Any]:
     """Assemble a miservice-compatible token dict, validating required fields."""
-    missing = [name for name in ("userId", "serviceToken") if not fields.get(name)]
+    # A browser account cookie can omit the account serviceToken entirely:
+    # passToken + userId are sufficient for the sid-specific Mina exchange.
+    missing = ["userId"] if not fields.get("userId") else []
+    if not fields.get("serviceToken") and not fields.get("passToken"):
+        missing.append("serviceToken")
     if missing:
         raise CookieParseError(f"缺少必需字段：{'、'.join(missing)}")
     user_id: Any = fields["userId"]
@@ -109,7 +119,7 @@ def build_token(fields: dict[str, str], *, auth_source: str | None = None) -> di
     token: dict[str, Any] = {
         "deviceId": fields.get("deviceId") or "".join(random.choices(string.ascii_uppercase, k=16)),
         "userId": user_id,
-        "micoapi": [fields.get("ssecurity", ""), fields["serviceToken"]],
+        "micoapi": [fields.get("ssecurity", ""), fields.get("serviceToken", "")],
     }
     if fields.get("passToken"):
         token["passToken"] = fields["passToken"]
