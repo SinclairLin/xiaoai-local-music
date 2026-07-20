@@ -13,7 +13,7 @@
 ## 功能特性
 
 - 扫描 `.mp3`、`.flac`、`.m4a`、`.wav` 文件，按文件名生成曲目标题和稳定 ID。
-- 提供曲目搜索、媒体文件访问、播放队列、播放/暂停/继续/上一首/下一首/停止/音量控制。
+- 提供曲目搜索、媒体文件访问、可持久化命名歌单、播放队列、播放/暂停/继续/上一首/下一首/停止/音量控制。
 - 支持账号密码登录、SMS/Email OTP 验证，以及粘贴 `userId`/`serviceToken` 的 Cookies 登录。
 - 可选启用小爱对话轮询，识别中文播放和控制指令；支持播放确认播报、错误退避和环形日志。
 - 配置通过 YAML 和环境变量管理，敏感 token 以 600 权限保存到配置目录。
@@ -106,6 +106,22 @@ curl -X POST "$BASE_URL/api/play" \
   -d '{"track_id":"<曲目ID>","queue_ids":["<曲目ID>"]}'
 ```
 
+#### 创建并播放歌单
+
+歌单保存在 `config_dir/playlists.json`，服务重启后会自动恢复。曲库文件仍按启动时扫描的快照管理；若歌单引用的文件已被删除，播放时会返回缺失曲目错误。
+
+```bash
+PLAYLIST=$(curl -s -X POST "$BASE_URL/api/playlists" \
+  -H 'content-type: application/json' \
+  -d '{"name":"通勤","track_ids":["<曲目ID1>","<曲目ID2>"]}')
+PLAYLIST_ID=$(printf '%s' "$PLAYLIST" | jq -r .id)
+curl -X POST "$BASE_URL/api/playlists/$PLAYLIST_ID/play" \
+  -H 'content-type: application/json' \
+  -d '{"mode":"sequential"}'
+```
+
+歌单播放模式为 `sequential`（顺序播放到末尾停止）、`list_loop`（列表循环）和 `single_loop`（循环当前曲目）。曲库页面的“推送”按钮只播放当前单曲一次；语音播放同样只播放命中的一首并在结束后停止。
+
 #### 查看设备和队列
 
 ```bash
@@ -136,9 +152,12 @@ curl "$BASE_URL/api/logs?limit=20"
 | `GET` | `/api/tracks?q=关键词` | 查询曲目 |
 | `GET`/`HEAD` | `/media/by-id/{track_id}` | 获取音频文件，支持 Range |
 | `POST` | `/api/play` | 播放曲目，可传 `queue_ids` |
+| `GET`、`POST` | `/api/playlists` | 列出或创建命名歌单 |
+| `GET`、`PUT`、`DELETE` | `/api/playlists/{playlist_id}` | 查看、编辑或删除歌单 |
+| `POST` | `/api/playlists/{playlist_id}/play` | 按模式播放歌单 |
 | `POST` | `/api/pause`、`/api/resume`、`/api/stop`、`/api/next`、`/api/previous` | 播放控制 |
 | `POST` | `/api/volume` | 设置 0–100 的音量 |
-| `GET` | `/api/devices`、`/api/queue` | 查看设备与队列 |
+| `GET` | `/api/devices`、`/api/queue` | 查看设备、队列、播放模式与探测状态 |
 | `GET`/`PUT` | `/api/config` | 读取或更新配置；密码读取时脱敏 |
 | `POST` | `/api/login`、`/api/login/otp`、`/api/login/cookies` | 账号/OTP/Cookies 登录 |
 | `GET` | `/api/login/status`、`/api/voice/status`、`/api/logs` | 查看登录、语音和日志状态 |

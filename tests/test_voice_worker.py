@@ -38,7 +38,7 @@ def test_worker_dispatches_play_stop_and_next(tmp_path):
     play, stop = asyncio.run(run())
     assert play[0]["matched_track"]["title"] == "稻香"
     assert stop == [{}]
-    assert [call[0] for call in mina.calls] == ["text_to_speech", "play_by_url", "stop"]
+    assert [call[0] for call in mina.calls] == ["text_to_speech", "set_loop", "play_by_url", "stop"]
 
 
 def test_worker_first_poll_only_sets_watermark_and_deduplicates(tmp_path):

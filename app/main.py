@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from .config import Settings
 from .login_session import LoginSessionManager
 from .mina_client import MinaMiserviceClient
+from .playback_monitor import PlaybackMonitor
+from .playlists import PlaylistStore
 from .routes import router
 from .service import MusicService
 from .voice_worker import MinaVoiceSource, VoiceSource, VoiceWorker
@@ -45,15 +47,18 @@ def create_app(settings: Settings | None = None, service: MusicService | None = 
         speak_confirm=settings.voice.speak_confirm,
         poll_interval_sec=settings.voice.poll_interval_sec,
     )
+    playback_monitor = PlaybackMonitor(configured_service)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         application.state.service.scan()
+        await application.state.playback_monitor.start()
         if application.state.voice_worker.enabled:
             await application.state.voice_worker.start()
         try:
             yield
         finally:
+            await application.state.playback_monitor.stop()
             await application.state.voice_worker.stop()
 
     application = FastAPI(title="XiaoAI Local Music", version="0.0.1", lifespan=lifespan)
@@ -62,6 +67,8 @@ def create_app(settings: Settings | None = None, service: MusicService | None = 
     application.state.mina_client = mina_client
     application.state.voice_log = voice_worker.log
     application.state.voice_worker = voice_worker
+    application.state.playback_monitor = playback_monitor
+    application.state.playlist_store = PlaylistStore(settings.config_dir)
     application.state.login_manager = LoginSessionManager()
     application.include_router(router)
     return application

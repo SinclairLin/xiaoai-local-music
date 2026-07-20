@@ -12,7 +12,18 @@ from fastapi.responses import FileResponse
 from .config import ConfigError, Settings
 from .cookie_login import COOKIE_AUTH_SOURCE, COOKIE_MINA_EXCHANGE_REQUIRED, CookieParseError, build_token, parse_credentials, write_token_file
 from .mina_client import MinaClientError, MinaDeviceError, MinaMiserviceClient
-from .models import ConfigUpdate, CookieLoginRequest, OtpSubmitRequest, PlayRequest, VoiceEnableRequest, VoiceRequest, VolumeRequest
+from .models import (
+    ConfigUpdate,
+    CookieLoginRequest,
+    OtpSubmitRequest,
+    PlayRequest,
+    PlaylistCreateRequest,
+    PlaylistPlayRequest,
+    PlaylistUpdateRequest,
+    VoiceEnableRequest,
+    VoiceRequest,
+    VolumeRequest,
+)
 from .service import PlaybackStateError, TrackNotFoundError
 from .voice import VoiceIntent, parse_command
 
@@ -89,10 +100,40 @@ def _queue_response(request: Request) -> dict[str, object]:
     return request.app.state.service.queue_state()
 
 
+def _playlist_view(request: Request, playlist: dict[str, object]) -> dict[str, object]:
+    service = request.app.state.service
+    track_ids = list(playlist["track_ids"])
+    tracks = []
+    missing = []
+    for track_id in track_ids:
+        track = service.get_track(str(track_id))
+        if track is None or service.get_media_file(str(track_id)) is None:
+            missing.append(track_id)
+        else:
+            tracks.append(track)
+    return {**playlist, "tracks": tracks, "missing_track_ids": missing}
+
+
+def _validate_playlist_tracks(request: Request, track_ids: list[str]) -> None:
+    if len(set(track_ids)) != len(track_ids):
+        raise HTTPException(status_code=422, detail="playlist track_ids must be unique")
+    service = request.app.state.service
+    missing = [track_id for track_id in track_ids if service.get_track(track_id) is None or service.get_media_file(track_id) is None]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"track not found: {', '.join(missing)}")
+
+
+def _playlist_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        raise HTTPException(status_code=422, detail="playlist name must not be empty")
+    return normalized
+
+
 @router.post("/api/play")
 def play(payload: PlayRequest, request: Request) -> dict[str, object]:
     try:
-        track = request.app.state.service.play(payload.track_id, payload.queue_ids)
+        track = request.app.state.service.play(payload.track_id, payload.queue_ids, payload.mode)
     except MinaDeviceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except TrackNotFoundError as exc:
@@ -106,6 +147,75 @@ def play(payload: PlayRequest, request: Request) -> dict[str, object]:
     response = _queue_response(request)
     response["status"] = "playing"
     response["track"] = track
+    return response
+
+
+@router.get("/api/playlists")
+def playlists(request: Request) -> dict[str, object]:
+    store = request.app.state.playlist_store
+    return {"playlists": [_playlist_view(request, item) for item in store.list()]}
+
+
+@router.post("/api/playlists")
+def create_playlist(payload: PlaylistCreateRequest, request: Request) -> dict[str, object]:
+    track_ids = list(payload.track_ids)
+    _validate_playlist_tracks(request, track_ids)
+    item = request.app.state.playlist_store.create(_playlist_name(payload.name), track_ids)
+    return _playlist_view(request, item)
+
+
+@router.get("/api/playlists/{playlist_id}")
+def get_playlist(playlist_id: str, request: Request) -> dict[str, object]:
+    item = request.app.state.playlist_store.get(playlist_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="playlist not found")
+    return _playlist_view(request, item)
+
+
+@router.put("/api/playlists/{playlist_id}")
+def update_playlist(playlist_id: str, payload: PlaylistUpdateRequest, request: Request) -> dict[str, object]:
+    current = request.app.state.playlist_store.get(playlist_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="playlist not found")
+    track_ids = current["track_ids"] if payload.track_ids is None else list(payload.track_ids)
+    _validate_playlist_tracks(request, track_ids)
+    name = None if payload.name is None else _playlist_name(payload.name)
+    item = request.app.state.playlist_store.update(playlist_id, name=name, track_ids=track_ids)
+    assert item is not None
+    return _playlist_view(request, item)
+
+
+@router.delete("/api/playlists/{playlist_id}")
+def delete_playlist(playlist_id: str, request: Request) -> dict[str, object]:
+    if not request.app.state.playlist_store.delete(playlist_id):
+        raise HTTPException(status_code=404, detail="playlist not found")
+    return {"deleted": True, "id": playlist_id}
+
+
+@router.post("/api/playlists/{playlist_id}/play")
+def play_playlist(playlist_id: str, payload: PlaylistPlayRequest, request: Request) -> dict[str, object]:
+    item = request.app.state.playlist_store.get(playlist_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="playlist not found")
+    track_ids = list(item["track_ids"])
+    if not track_ids:
+        raise HTTPException(status_code=422, detail="playlist is empty")
+    service = request.app.state.service
+    missing = [track_id for track_id in track_ids if service.get_track(track_id) is None or service.get_media_file(track_id) is None]
+    if missing:
+        raise HTTPException(status_code=409, detail=f"playlist has missing tracks: {', '.join(missing)}")
+    try:
+        track = request.app.state.service.play(track_ids[0], track_ids, payload.mode)
+    except MinaDeviceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TrackNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PlaybackStateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except MinaClientError as exc:
+        raise _mina_failure(exc) from exc
+    response = _queue_response(request)
+    response.update({"status": "playing", "track": track, "playlist": _playlist_view(request, item)})
     return response
 
 
