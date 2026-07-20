@@ -80,12 +80,23 @@ class _CookieTokenAccount(MiAccount):
         if self.token and self.token.get(COOKIE_MINA_EXCHANGE_REQUIRED):
             # A browser cookie's serviceToken belongs to the account service,
             # not necessarily to Mina.  Reuse its passToken to obtain a
-            # service token scoped to the requested sid.  MiAccount.login()
-            # uses the persisted userId/passToken cookies and keeps the
-            # operation token-only (no password or OTP fallback).
+            # service token scoped to the requested sid.
             self.token.pop("micoapi", None)
             self.token.pop(COOKIE_MINA_EXCHANGE_REQUIRED, None)
-            return bool(await super().login(sid))
+            # MiAccount.login() falls back to serviceLoginAuth2 with the
+            # configured username/password when the passToken is rejected,
+            # which can trigger a password login or an OTP SMS.  Blank the
+            # credentials for the exchange so an expired passToken fails
+            # token-only and is reported back to the Cookies form.
+            credentials = self.username, self.password
+            self.username = self.password = None
+            try:
+                if await super().login(sid):
+                    return True
+            finally:
+                self.username, self.password = credentials
+            self._login_error = "Cookies 已失效，请重新获取并粘贴"
+            return False
         if self.token and sid in self.token:
             return True
         self._login_error = "Cookies token is unavailable or expired"

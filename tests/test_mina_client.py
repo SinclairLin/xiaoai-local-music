@@ -502,6 +502,45 @@ def test_cookie_token_account_exchanges_account_cookie_for_mina_token(
     assert session.calls[0][2]["cookies"]["serviceToken"] == "mina-service-token"
 
 
+def test_cookie_token_account_exchange_never_uses_account_password(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token_path = tmp_path / ".mi.token"
+    token_path.write_text(
+        json.dumps({
+            "deviceId": "BROWSERDEVICE",
+            "userId": 1,
+            "passToken": "expired-pass-token",
+            "micoapi": ["", "account-service-token"],
+            "_auth_source": COOKIE_AUTH_SOURCE,
+            COOKIE_MINA_EXCHANGE_REQUIRED: True,
+        }),
+        encoding="utf-8",
+    )
+    seen_credentials: list[tuple[str | None, str | None]] = []
+
+    async def rejected_exchange(self: MiAccount, sid: str) -> bool:
+        seen_credentials.append((self.username, self.password))
+        return False
+
+    monkeypatch.setattr(MiAccount, "login", rejected_exchange)
+    account = _CookieTokenAccount(
+        FakeMiRequestSession(),
+        "user@example.com",
+        "secret",
+        token_store=str(token_path),
+        otp_callback=_otp_unavailable,
+    )
+
+    with pytest.raises(Exception, match="Cookies 已失效"):
+        asyncio.run(account.mi_request("micoapi", "https://api2.mina.mi.com/test", None, {}))
+
+    # 交换期间账号密码必须被清空，避免 passToken 失效时回退到密码/OTP 登录。
+    assert seen_credentials == [(None, None)]
+    assert account.username == "user@example.com"
+    assert account.password == "secret"
+
+
 def test_voice_events_cookie_account_loads_stored_token(tmp_path: Path) -> None:
     token_path = tmp_path / ".mi.token"
     token_path.write_text(
