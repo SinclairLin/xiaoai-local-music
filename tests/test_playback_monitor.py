@@ -21,6 +21,59 @@ def test_normalize_status_aliases() -> None:
     assert normalize_playback_status({"status": "finished"}) == "finished"
     assert normalize_playback_status({"state": "idle"}) == "stopped"
     assert normalize_playback_status({"other": "value"}) == "unknown"
+    assert normalize_playback_status({"state": "playback_stopped"}) == "stopped"
+    assert normalize_playback_status({"state": "play_state_paused"}) == "paused"
+    assert normalize_playback_status({"state": "suspended"}) == "paused"
+
+
+def test_normalize_status_integer_codes() -> None:
+    # Real MiNA hardware reports data.info with an integer status field.
+    assert normalize_playback_status({"status": 1}) == "playing"
+    assert normalize_playback_status({"status": 2}) == "paused"
+    assert normalize_playback_status({"status": 0}) == "stopped"
+    assert normalize_playback_status({"status": 3}) == "stopped"
+    assert normalize_playback_status({"status": 9}) == "unknown"
+    assert normalize_playback_status({"status": {"status": 0}}) == "stopped"
+
+
+def test_stale_probe_does_not_override_new_playback(tmp_path: Path) -> None:
+    service, mina, tracks = make_service(tmp_path)
+    service.play(tracks[0].id, [track.id for track in tracks], "sequential")
+    monitor = PlaybackMonitor(service, grace_sec=0)
+    original = mina.get_playback_status
+
+    def racy_get(device_id: str) -> dict | None:
+        result = original(device_id)
+        # A user request lands while the probe is still in flight.
+        service.play(tracks[1].id, [tracks[1].id], "once")
+        return result
+
+    mina.playback_status = {"status": "finished"}
+    mina.get_playback_status = racy_get  # type: ignore[method-assign]
+    asyncio.run(monitor.poll_once())
+    state = service.queue_state()
+    assert state["state"] == "playing"
+    assert state["current"].id == tracks[1].id
+    assert state["mode"] == "once"
+
+
+def test_pause_during_probe_is_not_overridden(tmp_path: Path) -> None:
+    service, mina, tracks = make_service(tmp_path)
+    service.play(tracks[0].id, [track.id for track in tracks], "sequential")
+    monitor = PlaybackMonitor(service, grace_sec=0)
+    original = mina.get_playback_status
+
+    def racy_get(device_id: str) -> dict | None:
+        result = original(device_id)
+        service.pause()
+        return result
+
+    mina.playback_status = {"status": "finished"}
+    mina.get_playback_status = racy_get  # type: ignore[method-assign]
+    asyncio.run(monitor.poll_once())
+    state = service.queue_state()
+    assert state["state"] == "paused"
+    assert state["current"].id == tracks[0].id
 
 
 def test_monitor_advances_and_stops_at_end(tmp_path: Path) -> None:

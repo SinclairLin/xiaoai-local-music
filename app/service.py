@@ -275,12 +275,14 @@ class MusicService:
         self.mina_client.pause(self._require_device())
         self._state = "paused"
         self._playback_status = "paused"
+        self._queue_revision += 1
 
     def stop(self) -> None:
         self.mina_client.stop(self._require_device())
         self._state = "stopped"
         self._playback_status = "stopped"
         self._playback_error = None
+        self._queue_revision += 1
 
     def resume(self) -> Track:
         if self._current_index is None or not self._queue:
@@ -290,6 +292,7 @@ class MusicService:
         self._playback_status = "playing"
         self._playback_error = None
         self._started_at = time.monotonic()
+        self._queue_revision += 1
         return self._queue[self._current_index]
 
     def set_volume(self, volume: int) -> None:
@@ -298,15 +301,24 @@ class MusicService:
     def set_device_id(self, device_id: str | None) -> None:
         self.device_id = device_id
 
-    def monitor_snapshot(self) -> tuple[str, PlaybackMode, int | None, float]:
-        return self._state, self._mode, self._current_index, self._started_at
+    def monitor_snapshot(self) -> tuple[str, PlaybackMode, int | None, float, int]:
+        return self._state, self._mode, self._current_index, self._started_at, self._queue_revision
 
     def set_playback_probe(self, status: str, error: str | None = None) -> None:
         self._playback_status = status
         self._playback_error = error
 
-    def advance_after_completion(self) -> Track | None:
-        """Advance once after a terminal device status was observed."""
+    def advance_after_completion(self, expected_revision: int | None = None) -> Track | None:
+        """Advance once after a terminal device status was observed.
+
+        ``expected_revision`` guards against a stale probe: any user-initiated
+        play/pause/stop/resume bumps the revision, invalidating observations
+        that were in flight when the request landed.
+        """
+        if expected_revision is not None and expected_revision != self._queue_revision:
+            return None
+        if self._state != "playing":
+            return None
         if self._current_index is None or not self._queue:
             return None
         index = self._current_index

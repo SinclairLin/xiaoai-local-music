@@ -181,7 +181,8 @@ def update_playlist(playlist_id: str, payload: PlaylistUpdateRequest, request: R
     _validate_playlist_tracks(request, track_ids)
     name = None if payload.name is None else _playlist_name(payload.name)
     item = request.app.state.playlist_store.update(playlist_id, name=name, track_ids=track_ids)
-    assert item is not None
+    if item is None:
+        raise HTTPException(status_code=404, detail="playlist not found")
     return _playlist_view(request, item)
 
 

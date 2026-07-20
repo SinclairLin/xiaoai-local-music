@@ -10,6 +10,10 @@ from .mina_client import MinaClientError
 from .service import MusicService
 
 
+# Real MiNA hardware reports integer codes inside the parsed data.info payload.
+_INT_STATUS = {0: "stopped", 1: "playing", 2: "paused", 3: "stopped"}
+
+
 def normalize_playback_status(raw: dict[str, Any] | None) -> str:
     if not isinstance(raw, dict):
         return "unknown"
@@ -19,18 +23,23 @@ def normalize_playback_status(raw: dict[str, Any] | None) -> str:
             value = raw[key]
             break
     if isinstance(value, dict):
-        value = value.get("status") or value.get("state")
+        nested = value.get("status")
+        value = nested if nested is not None else value.get("state")
     if isinstance(value, bool):
         return "playing" if value else "stopped"
-    text = str(value or "").strip().casefold()
-    if any(token in text for token in ("playing", "play", "running", "playing_music")):
-        return "playing"
-    if "pause" in text:
+    if isinstance(value, int):
+        return _INT_STATUS.get(value, "unknown")
+    text = str(value if value is not None else "").strip().casefold()
+    # Terminal/paused markers first: "playback_stopped" and "play_state_paused"
+    # must not match the bare "play" substring.
+    if any(token in text for token in ("pause", "suspend")):
         return "paused"
     if any(token in text for token in ("finish", "complete", "ended", "end")):
         return "finished"
     if any(token in text for token in ("stop", "idle", "none", "empty")):
         return "stopped"
+    if any(token in text for token in ("playing", "play", "running")):
+        return "playing"
     return "unknown"
 
 
@@ -59,7 +68,7 @@ class PlaybackMonitor:
         self._task = None
 
     async def poll_once(self) -> str | None:
-        state, _mode, current_index, started_at = self.service.monitor_snapshot()
+        state, _mode, current_index, started_at, revision = self.service.monitor_snapshot()
         device_id = self.service.device_id
         getter = getattr(self.service.mina_client, "get_playback_status", None)
         if state != "playing" or current_index is None or not device_id or getter is None:
@@ -78,7 +87,7 @@ class PlaybackMonitor:
         self.service.set_playback_probe(status)
         if status in {"finished", "stopped"}:
             try:
-                await asyncio.to_thread(self.service.advance_after_completion)
+                await asyncio.to_thread(self.service.advance_after_completion, revision)
             except MinaClientError as exc:
                 self.service.set_playback_probe("unknown", str(exc))
                 return "unknown"

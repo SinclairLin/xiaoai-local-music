@@ -407,6 +407,7 @@ class MockMinaClient:
 
     def set_volume(self, volume: int, device_id: str) -> Any:
         self.calls.append(("set_volume", (volume, device_id)))
+        return {"ok": True}
 
     def get_playback_status(self, device_id: str) -> dict[str, Any] | None:
         self.calls.append(("get_playback_status", (device_id,)))
