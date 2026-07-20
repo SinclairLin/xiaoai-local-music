@@ -58,19 +58,32 @@ def test_playlist_crud_persists_and_preserves_order(tmp_path: Path) -> None:
         assert fresh.get("/api/playlists").json()["playlists"] == []
 
 
-def test_playlist_validation_and_play_modes(tmp_path: Path) -> None:
+def test_playlist_validation_and_play_order_and_repeat(tmp_path: Path) -> None:
     client, mina, tracks = make_client(tmp_path)
     with client:
         assert client.post("/api/playlists", json={"name": " ", "track_ids": []}).status_code == 422
         assert client.post("/api/playlists", json={"name": "重复", "track_ids": [tracks[0]["id"], tracks[0]["id"]]}).status_code == 422
         assert client.post("/api/playlists", json={"name": "未知", "track_ids": ["missing"]}).status_code == 404
         created = client.post("/api/playlists", json={"name": "顺序", "track_ids": [item["id"] for item in tracks]}).json()
-        response = client.post(f"/api/playlists/{created['id']}/play", json={"mode": "sequential"})
+        response = client.post(
+            f"/api/playlists/{created['id']}/play",
+            json={"order": "sequential", "repeat": "off"},
+        )
         assert response.status_code == 200
-        assert response.json()["mode"] == "sequential"
+        assert response.json()["order"] == "sequential"
+        assert response.json()["repeat"] == "off"
         assert response.json()["current_index"] == 0
         assert mina.calls[-1][0] == "play_by_url"
-        assert client.post(f"/api/playlists/{created['id']}/play", json={"mode": "list_loop"}).json()["mode"] == "list_loop"
+        repeated = client.post(
+            f"/api/playlists/{created['id']}/play",
+            json={"order": "shuffle", "repeat": "all"},
+        )
+        assert repeated.status_code == 200
+        assert repeated.json()["order"] == "shuffle"
+        assert repeated.json()["repeat"] == "all"
+        assert client.post(
+            f"/api/playlists/{created['id']}/play", json={"mode": "sequential"}
+        ).status_code == 422
 
 
 def test_empty_playlist_cannot_start(tmp_path: Path) -> None:

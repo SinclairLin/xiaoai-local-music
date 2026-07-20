@@ -356,10 +356,14 @@ details.adv[open] > summary { margin-bottom: var(--space-2); }
         <button class="btn btn-sm" id="btnDeletePlaylist" disabled>删除</button>
       </div>
       <div class="playlist-actions">
-        <select id="playlistMode" aria-label="歌单播放模式">
+        <select id="playlistOrder" aria-label="歌单播放顺序">
           <option value="sequential">顺序播放</option>
-          <option value="list_loop">列表循环</option>
-          <option value="single_loop">单曲循环</option>
+          <option value="shuffle">随机播放</option>
+        </select>
+        <select id="playlistRepeat" aria-label="歌单循环方式">
+          <option value="off">播放完停止</option>
+          <option value="all">列表循环</option>
+          <option value="one">单曲循环</option>
         </select>
         <button class="btn btn-sm" id="btnPlayPlaylist" disabled>播放歌单</button>
         <span class="hint" id="playlistTrackCount"></span>
@@ -906,7 +910,7 @@ function previewToggle(id, btn) {
 }
 async function pushPlay(id) {
   try {
-    const res = await api("api/play", { method: "POST", body: { track_id: id, queue_ids: [id], mode: "once" } });
+    const res = await api("api/play", { method: "POST", body: { track_id: id, queue_ids: [id], order: "sequential", repeat: "off" } });
     applyQueue(res);
     toast("已推送单曲：" + ((res.track && res.track.title) || id), "ok");
   } catch (e) { toast("推送失败：" + e.message, "err"); }
@@ -1025,7 +1029,7 @@ async function playPlaylist() {
   const playlist = currentPlaylist();
   if (!playlist) return;
   try {
-    const res = await api("api/playlists/" + encodeURIComponent(playlist.id) + "/play", { method: "POST", body: { mode: $("playlistMode").value } });
+    const res = await api("api/playlists/" + encodeURIComponent(playlist.id) + "/play", { method: "POST", body: { order: $("playlistOrder").value, repeat: $("playlistRepeat").value } });
     applyQueue(res);
     toast("开始播放歌单：" + playlist.name, "ok");
   } catch (e) { toast("播放歌单失败：" + e.message, "err"); }
@@ -1034,7 +1038,8 @@ async function playPlaylist() {
 /* ── Player ── */
 function applyQueue(q) {
   state.queue = q;
-  if (q.mode === "sequential" || q.mode === "list_loop" || q.mode === "single_loop") $("playlistMode").value = q.mode;
+  if (q.order === "sequential" || q.order === "shuffle") $("playlistOrder").value = q.order;
+  if (q.repeat === "off" || q.repeat === "all" || q.repeat === "one") $("playlistRepeat").value = q.repeat;
   const stateMap = { playing: "播放中", paused: "已暂停", stopped: "已停止", idle: "空闲" };
   const chip = $("playerState");
   chip.textContent = stateMap[q.state] || q.state || "未知";
@@ -1043,8 +1048,10 @@ function applyQueue(q) {
   const eq = q.state === "playing" ? '<span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>' : "";
   $("nowTitle").innerHTML = cur ? eq + esc(cur.title) : "未在播放";
   const idx = cur ? (q.queue || []).findIndex((t) => t.id === cur.id) : -1;
+  const orderLabel = {sequential:"顺序播放",shuffle:"随机播放"}[q.order] || q.order;
+  const repeatLabel = {off:"播放完停止",all:"列表循环",one:"单曲循环"}[q.repeat] || q.repeat;
   $("nowSub").textContent = cur
-    ? cur.id + (idx >= 0 ? " · 第 " + (idx + 1) + "/" + q.queue.length + " 首" : "") + (q.mode ? " · " + ({once:"单曲一次",single_loop:"单曲循环",sequential:"顺序播放",list_loop:"列表循环"}[q.mode] || q.mode) : "") + (q.device ? " · 设备 " + q.device : "")
+    ? cur.id + (idx >= 0 ? " · 第 " + (idx + 1) + "/" + q.queue.length + " 首" : "") + (q.order ? " · " + orderLabel : "") + (q.repeat ? " · " + repeatLabel : "") + (q.device ? " · 设备 " + q.device : "")
     : (q.device ? "设备 " + q.device + " · 从曲库搜索并推送一首歌开始" : "从曲库搜索并推送一首歌开始");
   $("playIcon").innerHTML = q.state === "playing"
     ? '<path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/>'
@@ -1184,7 +1191,7 @@ $("queueList").addEventListener("click", (e) => {
   const row = e.target.closest(".row");
   if (row && e.target.closest(".act-qplay")) {
     const ids = (state.queue.queue || []).map((t) => t.id);
-    api("api/play", { method: "POST", body: { track_id: row.dataset.id, queue_ids: ids, mode: state.queue.mode } })
+    api("api/play", { method: "POST", body: { track_id: row.dataset.id, queue_ids: ids, order: state.queue.order, repeat: state.queue.repeat } })
       .then(applyQueue).catch((err) => toast("播放失败：" + err.message, "err"));
   }
 });

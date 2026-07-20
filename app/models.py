@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+PlaybackOrder = Literal["sequential", "shuffle"]
+RepeatMode = Literal["off", "all", "one"]
+
+
+class StrictRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class Track(BaseModel):
@@ -18,10 +26,11 @@ class Track(BaseModel):
     path: str
 
 
-class PlayRequest(BaseModel):
+class PlayRequest(StrictRequest):
     track_id: str = Field(min_length=1)
     queue_ids: list[str] | None = None
-    mode: Literal["once", "single_loop", "sequential", "list_loop"] | None = None
+    order: PlaybackOrder = "sequential"
+    repeat: RepeatMode = "off"
 
 
 class PlaylistCreateRequest(BaseModel):
@@ -34,8 +43,9 @@ class PlaylistUpdateRequest(BaseModel):
     track_ids: list[str] | None = None
 
 
-class PlaylistPlayRequest(BaseModel):
-    mode: Literal["sequential", "list_loop", "single_loop"] = "sequential"
+class PlaylistPlayRequest(StrictRequest):
+    order: PlaybackOrder = "sequential"
+    repeat: RepeatMode = "off"
 
 
 class VoiceRequest(BaseModel):

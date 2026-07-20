@@ -117,10 +117,10 @@ PLAYLIST=$(curl -s -X POST "$BASE_URL/api/playlists" \
 PLAYLIST_ID=$(printf '%s' "$PLAYLIST" | jq -r .id)
 curl -X POST "$BASE_URL/api/playlists/$PLAYLIST_ID/play" \
   -H 'content-type: application/json' \
-  -d '{"mode":"sequential"}'
+  -d '{"order":"shuffle","repeat":"all"}'
 ```
 
-歌单播放模式为 `sequential`（顺序播放到末尾停止）、`list_loop`（列表循环）和 `single_loop`（循环当前曲目）。曲库页面的“推送”按钮只播放当前单曲一次；语音播放同样只播放命中的一首并在结束后停止。
+播放请求使用两个独立字段：`order` 为 `sequential`（顺序）或 `shuffle`（随机）；`repeat` 为 `off`（当前轮次结束后停止）、`all`（列表循环）或 `one`（循环当前曲目）。随机播放会先生成一轮不重复的随机顺序，`repeat=all` 时整轮结束后重新洗牌。曲库页面的“推送”按钮和语音播放默认使用 `order=sequential`、`repeat=off`。旧的 `mode` 字段不再接受。
 
 #### 查看设备和队列
 
@@ -151,13 +151,13 @@ curl "$BASE_URL/api/logs?limit=20"
 | --- | --- | --- |
 | `GET` | `/api/tracks?q=关键词` | 查询曲目 |
 | `GET`/`HEAD` | `/media/by-id/{track_id}` | 获取音频文件，支持 Range |
-| `POST` | `/api/play` | 播放曲目，可传 `queue_ids` 与 `mode`（缺省：单曲 `once`、多曲 `sequential`） |
+| `POST` | `/api/play` | 播放曲目，可传 `queue_ids`、`order` 与 `repeat`（缺省：顺序播放，播放完停止） |
 | `GET`、`POST` | `/api/playlists` | 列出或创建命名歌单 |
 | `GET`、`PUT`、`DELETE` | `/api/playlists/{playlist_id}` | 查看、编辑或删除歌单 |
-| `POST` | `/api/playlists/{playlist_id}/play` | 按模式播放歌单 |
+| `POST` | `/api/playlists/{playlist_id}/play` | 按播放顺序与循环方式播放歌单 |
 | `POST` | `/api/pause`、`/api/resume`、`/api/stop`、`/api/next`、`/api/previous` | 播放控制 |
 | `POST` | `/api/volume` | 设置 0–100 的音量 |
-| `GET` | `/api/devices`、`/api/queue` | 查看设备、队列、播放模式与探测状态 |
+| `GET` | `/api/devices`、`/api/queue` | 查看设备、队列、播放顺序、循环方式与探测状态 |
 | `GET`/`PUT` | `/api/config` | 读取或更新配置；密码读取时脱敏 |
 | `POST` | `/api/login`、`/api/login/otp`、`/api/login/cookies` | 账号/OTP/Cookies 登录 |
 | `GET` | `/api/login/status`、`/api/voice/status`、`/api/logs` | 查看登录、语音和日志状态 |

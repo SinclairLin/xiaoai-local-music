@@ -68,7 +68,7 @@ class PlaybackMonitor:
         self._task = None
 
     async def poll_once(self) -> str | None:
-        state, _mode, current_index, started_at, revision = self.service.monitor_snapshot()
+        state, _order, current_index, started_at, revision = self.service.monitor_snapshot()
         device_id = self.service.device_id
         getter = getattr(self.service.mina_client, "get_playback_status", None)
         if state != "playing" or current_index is None or not device_id or getter is None:
