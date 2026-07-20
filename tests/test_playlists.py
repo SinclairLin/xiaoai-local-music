@@ -89,3 +89,16 @@ def test_deleted_track_is_reported_without_partial_play(tmp_path: Path) -> None:
         response = client.post(f"/api/playlists/{created['id']}/play", json={})
         assert response.status_code == 409
         assert not any(call[0] == "play_by_url" for call in mina.calls)
+
+
+def test_corrupt_store_is_quarantined_and_service_starts(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "playlists.json").write_text("{not json", encoding="utf-8")
+    client, _, tracks = make_client(tmp_path)
+    with client:
+        assert client.get("/api/playlists").json()["playlists"] == []
+        assert client.post("/api/playlists", json={"name": "重建", "track_ids": [tracks[0]["id"]]}).status_code == 200
+    backups = list(config_dir.glob("playlists.json.corrupt-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "{not json"

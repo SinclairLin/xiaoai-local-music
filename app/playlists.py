@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class PlaylistStoreError(RuntimeError):
@@ -22,7 +26,21 @@ class PlaylistStore:
         self.path = Path(config_dir) / "playlists.json"
         self._lock = threading.RLock()
         self._items: dict[str, dict[str, Any]] = {}
-        self._load()
+        try:
+            self._load()
+        except PlaylistStoreError as exc:
+            self._items = {}
+            backup = self._quarantine()
+            logger.warning("playlist store unreadable, backed up to %s and starting empty: %s", backup, exc)
+
+    def _quarantine(self) -> Path:
+        """Move an unreadable store aside so a later write cannot destroy it."""
+        backup = self.path.with_name(f"{self.path.name}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}")
+        try:
+            os.replace(self.path, backup)
+        except OSError as exc:
+            raise PlaylistStoreError(f"cannot back up corrupt playlist store {self.path}: {exc}") from exc
+        return backup
 
     def _load(self) -> None:
         if not self.path.exists():

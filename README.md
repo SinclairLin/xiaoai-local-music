@@ -108,7 +108,7 @@ curl -X POST "$BASE_URL/api/play" \
 
 #### 创建并播放歌单
 
-歌单保存在 `config_dir/playlists.json`，服务重启后会自动恢复。曲库文件仍按启动时扫描的快照管理；若歌单引用的文件已被删除，播放时会返回缺失曲目错误。
+歌单保存在 `config_dir/playlists.json`，服务重启后会自动恢复；若歌单文件损坏，启动时会自动备份为 `playlists.json.corrupt-*` 并以空歌单继续运行。曲库文件仍按启动时扫描的快照管理；若歌单引用的文件已被删除，播放时会返回缺失曲目错误。
 
 ```bash
 PLAYLIST=$(curl -s -X POST "$BASE_URL/api/playlists" \
@@ -151,7 +151,7 @@ curl "$BASE_URL/api/logs?limit=20"
 | --- | --- | --- |
 | `GET` | `/api/tracks?q=关键词` | 查询曲目 |
 | `GET`/`HEAD` | `/media/by-id/{track_id}` | 获取音频文件，支持 Range |
-| `POST` | `/api/play` | 播放曲目，可传 `queue_ids` |
+| `POST` | `/api/play` | 播放曲目，可传 `queue_ids` 与 `mode`（缺省：单曲 `once`、多曲 `sequential`） |
 | `GET`、`POST` | `/api/playlists` | 列出或创建命名歌单 |
 | `GET`、`PUT`、`DELETE` | `/api/playlists/{playlist_id}` | 查看、编辑或删除歌单 |
 | `POST` | `/api/playlists/{playlist_id}/play` | 按模式播放歌单 |

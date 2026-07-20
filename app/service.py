@@ -223,7 +223,7 @@ class MusicService:
             raise TrackNotFoundError("one or more queue tracks are no longer available")
         queue = tuple(item for item in tracks if item is not None)
         current_index = queue.index(track)
-        selected_mode: PlaybackMode = mode or ("single_loop" if len(queue) == 1 else "sequential")
+        selected_mode: PlaybackMode = mode or ("once" if len(queue) == 1 else "sequential")
         if selected_mode not in {"once", "single_loop", "sequential", "list_loop"}:
             raise PlaybackStateError("unsupported playback mode")
         previous = (
