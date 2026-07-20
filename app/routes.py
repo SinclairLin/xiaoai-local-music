@@ -133,7 +133,9 @@ def _playlist_name(name: str) -> str:
 @router.post("/api/play")
 def play(payload: PlayRequest, request: Request) -> dict[str, object]:
     try:
-        track = request.app.state.service.play(payload.track_id, payload.queue_ids, payload.mode)
+        track = request.app.state.service.play(
+            payload.track_id, payload.queue_ids, payload.order, payload.repeat
+        )
     except MinaDeviceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except TrackNotFoundError as exc:
@@ -206,7 +208,9 @@ def play_playlist(playlist_id: str, payload: PlaylistPlayRequest, request: Reque
     if missing:
         raise HTTPException(status_code=409, detail=f"playlist has missing tracks: {', '.join(missing)}")
     try:
-        track = request.app.state.service.play(track_ids[0], track_ids, payload.mode)
+        track = request.app.state.service.play(
+            track_ids[0], track_ids, payload.order, payload.repeat
+        )
     except MinaDeviceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except TrackNotFoundError as exc:

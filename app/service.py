@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import random
 import re
 import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
-
 from .mina_client import MinaClient, MinaDeviceError, MockMinaClient
-from .models import Track
+from .models import PlaybackOrder, RepeatMode, Track
 
 
 MEDIA_TYPES = {
@@ -34,9 +33,6 @@ class PlaybackStateError(RuntimeError):
 
 class TrackNotFoundError(PlaybackStateError):
     """Raised when an explicitly requested queue item is missing."""
-
-
-PlaybackMode = Literal["once", "single_loop", "sequential", "list_loop"]
 
 
 @dataclass(frozen=True)
@@ -73,7 +69,10 @@ class MusicService:
         self._queue: tuple[Track, ...] = ()
         self._current_index: int | None = None
         self._state = "idle"
-        self._mode: PlaybackMode = "once"
+        self._order: PlaybackOrder = "sequential"
+        self._repeat: RepeatMode = "off"
+        self._play_sequence: tuple[int, ...] = ()
+        self._play_cursor: int | None = None
         self._queue_revision = 0
         self._playback_status = "idle"
         self._playback_error: str | None = None
@@ -181,26 +180,27 @@ class MusicService:
             "current": current,
             "queue": list(self._queue),
             "device": self.device_id,
-            "mode": self._mode,
+            "order": self._order,
+            "repeat": self._repeat,
             "current_index": self._current_index,
             "queue_revision": self._queue_revision,
             "playback_status": self._playback_status,
             "playback_error": self._playback_error,
         }
 
-    def _set_loop_mode(self, mode: PlaybackMode) -> None:
+    def _set_loop_mode(self, repeat: RepeatMode) -> None:
         setter = getattr(self.mina_client, "set_loop", None)
         if setter is None:
             return
         # MiService: 0=single-track repeat, 1=list/sequential playback.
-        setter(0 if mode == "single_loop" else 1, self._require_device())
+        setter(0 if repeat == "one" else 1, self._require_device())
 
-    def _play_target(self, target: Track, target_index: int, *, mode: PlaybackMode | None = None) -> Track:
+    def _play_target(self, target: Track, target_index: int) -> Track:
         device_id = self._require_device()
-        selected_mode = mode or self._mode
-        self._set_loop_mode(selected_mode)
+        self._set_loop_mode(self._repeat)
         self.mina_client.play_by_url(target.path, device_id)
         self._current_index = target_index
+        self._play_cursor = self._play_sequence.index(target_index)
         self._state = "playing"
         self._playback_status = "playing"
         self._playback_error = None
@@ -208,7 +208,36 @@ class MusicService:
         self._queue_revision += 1
         return target
 
-    def play(self, track_id: str, queue_ids: list[str] | None = None, mode: PlaybackMode | None = None) -> Track | None:
+    @staticmethod
+    def _validate_playback_options(order: str, repeat: str) -> None:
+        if order not in {"sequential", "shuffle"}:
+            raise PlaybackStateError("unsupported playback order")
+        if repeat not in {"off", "all", "one"}:
+            raise PlaybackStateError("unsupported repeat mode")
+
+    @staticmethod
+    def _new_shuffle_sequence(length: int, *, exclude_index: int | None = None) -> tuple[int, ...]:
+        sequence = list(range(length))
+        random.shuffle(sequence)
+        if exclude_index is not None and length > 1 and sequence[0] == exclude_index:
+            sequence[0], sequence[1] = sequence[1], sequence[0]
+        return tuple(sequence)
+
+    def _build_play_sequence(self, length: int, current_index: int) -> tuple[int, ...]:
+        if self._order == "sequential":
+            return tuple(range(length))
+        sequence = list(self._new_shuffle_sequence(length))
+        sequence.remove(current_index)
+        sequence.insert(0, current_index)
+        return tuple(sequence)
+
+    def play(
+        self,
+        track_id: str,
+        queue_ids: list[str] | None = None,
+        order: PlaybackOrder | None = None,
+        repeat: RepeatMode | None = None,
+    ) -> Track | None:
         """Play a track after validating the entire requested queue."""
         track = self.get_track(track_id)
         if track is None:
@@ -223,29 +252,38 @@ class MusicService:
             raise TrackNotFoundError("one or more queue tracks are no longer available")
         queue = tuple(item for item in tracks if item is not None)
         current_index = queue.index(track)
-        selected_mode: PlaybackMode = mode or ("once" if len(queue) == 1 else "sequential")
-        if selected_mode not in {"once", "single_loop", "sequential", "list_loop"}:
-            raise PlaybackStateError("unsupported playback mode")
+        selected_order: PlaybackOrder = order or "sequential"
+        selected_repeat: RepeatMode = repeat or "off"
+        self._validate_playback_options(selected_order, selected_repeat)
         previous = (
             self._queue,
             self._current_index,
             self._state,
-            self._mode,
+            self._order,
+            self._repeat,
+            self._play_sequence,
+            self._play_cursor,
             self._queue_revision,
             self._playback_status,
             self._playback_error,
             self._started_at,
         )
         self._queue = queue
-        self._mode = selected_mode
+        self._order = selected_order
+        self._repeat = selected_repeat
+        self._play_sequence = self._build_play_sequence(len(queue), current_index)
+        self._play_cursor = self._play_sequence.index(current_index)
         try:
-            return self._play_target(track, current_index, mode=selected_mode)
+            return self._play_target(track, current_index)
         except Exception:
             (
                 self._queue,
                 self._current_index,
                 self._state,
-                self._mode,
+                self._order,
+                self._repeat,
+                self._play_sequence,
+                self._play_cursor,
                 self._queue_revision,
                 self._playback_status,
                 self._playback_error,
@@ -257,9 +295,18 @@ class MusicService:
         device_id = self._require_device()
         if self._current_index is None or not self._queue:
             raise PlaybackStateError("playback queue is empty")
-        target_index = self._current_index + delta
-        if self._mode == "list_loop" and self._queue:
-            target_index %= len(self._queue)
+        if not self._play_sequence or self._play_cursor is None:
+            raise PlaybackStateError("playback sequence is empty")
+        target_cursor = self._play_cursor + delta
+        if target_cursor < 0 or target_cursor >= len(self._play_sequence):
+            if self._repeat != "all":
+                return self._queue[self._current_index]
+            if delta > 0 and self._order == "shuffle":
+                self._play_sequence = self._new_shuffle_sequence(
+                    len(self._queue), exclude_index=self._current_index
+                )
+            target_cursor %= len(self._play_sequence)
+        target_index = self._play_sequence[target_cursor]
         if target_index < 0 or target_index >= len(self._queue):
             return self._queue[self._current_index]
         target = self._queue[target_index]
@@ -301,8 +348,8 @@ class MusicService:
     def set_device_id(self, device_id: str | None) -> None:
         self.device_id = device_id
 
-    def monitor_snapshot(self) -> tuple[str, PlaybackMode, int | None, float, int]:
-        return self._state, self._mode, self._current_index, self._started_at, self._queue_revision
+    def monitor_snapshot(self) -> tuple[str, PlaybackOrder, int | None, float, int]:
+        return self._state, self._order, self._current_index, self._started_at, self._queue_revision
 
     def set_playback_probe(self, status: str, error: str | None = None) -> None:
         self._playback_status = status
@@ -322,17 +369,23 @@ class MusicService:
         if self._current_index is None or not self._queue:
             return None
         index = self._current_index
-        if self._mode == "once":
-            self._state = "stopped"
-            self._playback_status = "finished"
-            self._queue_revision += 1
-            return None
-        if self._mode == "single_loop":
+        if self._repeat == "one":
             return self._play_target(self._queue[index], index)
-        if index + 1 < len(self._queue):
-            return self._play_target(self._queue[index + 1], index + 1)
-        if self._mode == "list_loop":
-            return self._play_target(self._queue[0], 0)
+        if self._play_sequence and self._play_cursor is not None:
+            target_cursor = self._play_cursor + 1
+            if target_cursor < len(self._play_sequence):
+                target_index = self._play_sequence[target_cursor]
+                return self._play_target(self._queue[target_index], target_index)
+            if self._repeat == "all":
+                if self._order == "shuffle":
+                    self._play_sequence = self._new_shuffle_sequence(
+                        len(self._queue), exclude_index=index
+                    )
+                else:
+                    self._play_sequence = tuple(range(len(self._queue)))
+                self._play_cursor = 0
+                target_index = self._play_sequence[0]
+                return self._play_target(self._queue[target_index], target_index)
         self._state = "stopped"
         self._playback_status = "finished"
         self._queue_revision += 1

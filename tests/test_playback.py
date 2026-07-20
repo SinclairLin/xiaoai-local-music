@@ -30,14 +30,25 @@ def test_play_calls_play_by_url_and_queue_controls_update_state(tmp_path: Path) 
         assert client.post("/api/stop").json()["state"] == "stopped"
 
 
-def test_play_default_mode_is_once_for_single_track_and_sequential_for_queue(tmp_path: Path) -> None:
+def test_play_defaults_to_sequential_order_and_no_repeat(tmp_path: Path) -> None:
     client, _ = make_client(tmp_path)
     with client:
         tracks = client.get("/api/tracks").json()["tracks"]
         single = client.post("/api/play", json={"track_id": tracks[0]["id"]}).json()
-        assert single["mode"] == "once"
+        assert single["order"] == "sequential"
+        assert single["repeat"] == "off"
         grouped = client.post("/api/play", json={"track_id": tracks[0]["id"], "queue_ids": [item["id"] for item in tracks]}).json()
-        assert grouped["mode"] == "sequential"
+        assert grouped["order"] == "sequential"
+        assert grouped["repeat"] == "off"
+
+
+def test_play_rejects_legacy_mode_and_invalid_options(tmp_path: Path) -> None:
+    client, _ = make_client(tmp_path)
+    with client:
+        track_id = client.get("/api/tracks").json()["tracks"][0]["id"]
+        assert client.post("/api/play", json={"track_id": track_id, "mode": "sequential"}).status_code == 422
+        assert client.post("/api/play", json={"track_id": track_id, "order": "random"}).status_code == 422
+        assert client.post("/api/play", json={"track_id": track_id, "repeat": "loop"}).status_code == 422
 
 
 def test_track_id_missing_from_queue_ids_is_rejected_with_400(tmp_path: Path) -> None:
