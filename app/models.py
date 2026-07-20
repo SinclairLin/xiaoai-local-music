@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -19,6 +21,21 @@ class Track(BaseModel):
 class PlayRequest(BaseModel):
     track_id: str = Field(min_length=1)
     queue_ids: list[str] | None = None
+    mode: Literal["once", "single_loop", "sequential", "list_loop"] | None = None
+
+
+class PlaylistCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    track_ids: list[str] = Field(default_factory=list)
+
+
+class PlaylistUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    track_ids: list[str] | None = None
+
+
+class PlaylistPlayRequest(BaseModel):
+    mode: Literal["sequential", "list_loop", "single_loop"] = "sequential"
 
 
 class VoiceRequest(BaseModel):

@@ -23,6 +23,7 @@ class FakeMiNAService:
         self.devices = devices
         self.error = error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
+        self.playback_status: dict[str, Any] | None = {"status": "stopped"}
 
     async def _record(self, name: str, *args: Any) -> Any:
         self.calls.append((name, args))
@@ -53,6 +54,15 @@ class FakeMiNAService:
 
     async def player_set_volume(self, deviceId: str, volume: int) -> Any:
         return await self._record("player_set_volume", deviceId, volume)
+
+    async def player_get_status(self, deviceId: str) -> Any:
+        self.calls.append(("player_get_status", (deviceId,)))
+        if self.error is not None:
+            raise self.error
+        return self.playback_status
+
+    async def player_set_loop(self, deviceId: str, loop_type: int) -> Any:
+        return await self._record("player_set_loop", deviceId, loop_type)
 
     async def get_latest_ask(self, deviceId: str) -> Any:
         self.calls.append(("get_latest_ask", (deviceId,)))
@@ -114,6 +124,19 @@ def test_playback_methods_flip_argument_order(tmp_path: Path) -> None:
         ("player_stop", ("d1",)),
         ("player_play", ("d1",)),
         ("player_set_volume", ("d1", 30)),
+    ]
+
+
+def test_playback_status_and_loop_methods(tmp_path: Path) -> None:
+    service = FakeMiNAService()
+    service.playback_status = {"status": "playing"}
+    client = make_client(tmp_path, service)
+
+    assert client.get_playback_status("d1") == {"status": "playing"}
+    assert client.set_loop(1, "d1") is True
+    assert service.calls == [
+        ("player_get_status", ("d1",)),
+        ("player_set_loop", ("d1", 1)),
     ]
 
 

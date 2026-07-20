@@ -6,8 +6,10 @@ import hashlib
 import os
 import re
 import stat
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from .mina_client import MinaClient, MinaDeviceError, MockMinaClient
 from .models import Track
@@ -32,6 +34,9 @@ class PlaybackStateError(RuntimeError):
 
 class TrackNotFoundError(PlaybackStateError):
     """Raised when an explicitly requested queue item is missing."""
+
+
+PlaybackMode = Literal["once", "single_loop", "sequential", "list_loop"]
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,11 @@ class MusicService:
         self._queue: tuple[Track, ...] = ()
         self._current_index: int | None = None
         self._state = "idle"
+        self._mode: PlaybackMode = "once"
+        self._queue_revision = 0
+        self._playback_status = "idle"
+        self._playback_error: str | None = None
+        self._started_at = 0.0
 
     def scan(self) -> list[Track]:
         """Build and store a deterministic snapshot of the music directory."""
@@ -171,9 +181,34 @@ class MusicService:
             "current": current,
             "queue": list(self._queue),
             "device": self.device_id,
+            "mode": self._mode,
+            "current_index": self._current_index,
+            "queue_revision": self._queue_revision,
+            "playback_status": self._playback_status,
+            "playback_error": self._playback_error,
         }
 
-    def play(self, track_id: str, queue_ids: list[str] | None = None) -> Track | None:
+    def _set_loop_mode(self, mode: PlaybackMode) -> None:
+        setter = getattr(self.mina_client, "set_loop", None)
+        if setter is None:
+            return
+        # MiService: 0=single-track repeat, 1=list/sequential playback.
+        setter(0 if mode == "single_loop" else 1, self._require_device())
+
+    def _play_target(self, target: Track, target_index: int, *, mode: PlaybackMode | None = None) -> Track:
+        device_id = self._require_device()
+        selected_mode = mode or self._mode
+        self._set_loop_mode(selected_mode)
+        self.mina_client.play_by_url(target.path, device_id)
+        self._current_index = target_index
+        self._state = "playing"
+        self._playback_status = "playing"
+        self._playback_error = None
+        self._started_at = time.monotonic()
+        self._queue_revision += 1
+        return target
+
+    def play(self, track_id: str, queue_ids: list[str] | None = None, mode: PlaybackMode | None = None) -> Track | None:
         """Play a track after validating the entire requested queue."""
         track = self.get_track(track_id)
         if track is None:
@@ -184,26 +219,51 @@ class MusicService:
         tracks = [self.get_track(item) for item in ids]
         if any(item is None for item in tracks):
             raise TrackNotFoundError("one or more queue tracks were not found")
+        if any(self.get_media_file(item.id) is None for item in tracks if item is not None):
+            raise TrackNotFoundError("one or more queue tracks are no longer available")
         queue = tuple(item for item in tracks if item is not None)
         current_index = queue.index(track)
-        self.mina_client.play_by_url(track.path, self._require_device())
+        selected_mode: PlaybackMode = mode or ("once" if len(queue) == 1 else "sequential")
+        if selected_mode not in {"once", "single_loop", "sequential", "list_loop"}:
+            raise PlaybackStateError("unsupported playback mode")
+        previous = (
+            self._queue,
+            self._current_index,
+            self._state,
+            self._mode,
+            self._queue_revision,
+            self._playback_status,
+            self._playback_error,
+            self._started_at,
+        )
         self._queue = queue
-        self._current_index = current_index
-        self._state = "playing"
-        return track
+        self._mode = selected_mode
+        try:
+            return self._play_target(track, current_index, mode=selected_mode)
+        except Exception:
+            (
+                self._queue,
+                self._current_index,
+                self._state,
+                self._mode,
+                self._queue_revision,
+                self._playback_status,
+                self._playback_error,
+                self._started_at,
+            ) = previous
+            raise
 
     def _move(self, delta: int) -> Track | None:
         device_id = self._require_device()
         if self._current_index is None or not self._queue:
             raise PlaybackStateError("playback queue is empty")
         target_index = self._current_index + delta
+        if self._mode == "list_loop" and self._queue:
+            target_index %= len(self._queue)
         if target_index < 0 or target_index >= len(self._queue):
             return self._queue[self._current_index]
         target = self._queue[target_index]
-        self.mina_client.play_by_url(target.path, device_id)
-        self._current_index = target_index
-        self._state = "playing"
-        return target
+        return self._play_target(target, target_index)
 
     def next(self) -> Track | None:
         return self._move(1)
@@ -214,16 +274,25 @@ class MusicService:
     def pause(self) -> None:
         self.mina_client.pause(self._require_device())
         self._state = "paused"
+        self._playback_status = "paused"
+        self._queue_revision += 1
 
     def stop(self) -> None:
         self.mina_client.stop(self._require_device())
         self._state = "stopped"
+        self._playback_status = "stopped"
+        self._playback_error = None
+        self._queue_revision += 1
 
     def resume(self) -> Track:
         if self._current_index is None or not self._queue:
             raise PlaybackStateError("playback queue is empty")
         self.mina_client.play(self._require_device())
         self._state = "playing"
+        self._playback_status = "playing"
+        self._playback_error = None
+        self._started_at = time.monotonic()
+        self._queue_revision += 1
         return self._queue[self._current_index]
 
     def set_volume(self, volume: int) -> None:
@@ -231,3 +300,40 @@ class MusicService:
 
     def set_device_id(self, device_id: str | None) -> None:
         self.device_id = device_id
+
+    def monitor_snapshot(self) -> tuple[str, PlaybackMode, int | None, float, int]:
+        return self._state, self._mode, self._current_index, self._started_at, self._queue_revision
+
+    def set_playback_probe(self, status: str, error: str | None = None) -> None:
+        self._playback_status = status
+        self._playback_error = error
+
+    def advance_after_completion(self, expected_revision: int | None = None) -> Track | None:
+        """Advance once after a terminal device status was observed.
+
+        ``expected_revision`` guards against a stale probe: any user-initiated
+        play/pause/stop/resume bumps the revision, invalidating observations
+        that were in flight when the request landed.
+        """
+        if expected_revision is not None and expected_revision != self._queue_revision:
+            return None
+        if self._state != "playing":
+            return None
+        if self._current_index is None or not self._queue:
+            return None
+        index = self._current_index
+        if self._mode == "once":
+            self._state = "stopped"
+            self._playback_status = "finished"
+            self._queue_revision += 1
+            return None
+        if self._mode == "single_loop":
+            return self._play_target(self._queue[index], index)
+        if index + 1 < len(self._queue):
+            return self._play_target(self._queue[index + 1], index + 1)
+        if self._mode == "list_loop":
+            return self._play_target(self._queue[0], 0)
+        self._state = "stopped"
+        self._playback_status = "finished"
+        self._queue_revision += 1
+        return None

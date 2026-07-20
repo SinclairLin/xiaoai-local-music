@@ -52,6 +52,8 @@ class MinaClient(Protocol):
     def stop(self, device_id: str) -> Any: ...
     def play(self, device_id: str) -> Any: ...
     def set_volume(self, volume: int, device_id: str) -> Any: ...
+    def get_playback_status(self, device_id: str) -> dict[str, Any] | None: ...
+    def set_loop(self, loop_type: int, device_id: str) -> Any: ...
 
 
 async def _otp_unavailable(otp_method: str) -> str:
@@ -231,6 +233,12 @@ class MinaMiserviceClient:
     def set_volume(self, volume: int, device_id: str) -> Any:
         return self._run(lambda service: service.player_set_volume(device_id, volume))
 
+    def get_playback_status(self, device_id: str) -> dict[str, Any] | None:
+        return self._run(lambda service: service.player_get_status(device_id))
+
+    def set_loop(self, loop_type: int, device_id: str) -> Any:
+        return self._run(lambda service: service.player_set_loop(device_id, loop_type))
+
     async def _invalidate_and_login(self, account: MiAccount) -> bool:
         """Drop a stale micoapi service token and refresh it once."""
         token = account.token or {}
@@ -363,6 +371,7 @@ class MockMinaClient:
     def __init__(self, device_id: str | None = None) -> None:
         self.device_id = device_id or "mock-device"
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
+        self.playback_status: dict[str, Any] | None = {"status": "stopped"}
 
     def login(self) -> str:
         self.calls.append(("login", ()))
@@ -378,22 +387,34 @@ class MockMinaClient:
 
     def play_by_url(self, url: str, device_id: str) -> Any:
         self.calls.append(("play_by_url", (url, device_id)))
+        self.playback_status = {"status": "playing"}
         return {"ok": True}
 
     def pause(self, device_id: str) -> Any:
         self.calls.append(("pause", (device_id,)))
+        self.playback_status = {"status": "paused"}
         return {"ok": True}
 
     def stop(self, device_id: str) -> Any:
         self.calls.append(("stop", (device_id,)))
+        self.playback_status = {"status": "stopped"}
         return {"ok": True}
 
     def play(self, device_id: str) -> Any:
         self.calls.append(("play", (device_id,)))
+        self.playback_status = {"status": "playing"}
         return {"ok": True}
 
     def set_volume(self, volume: int, device_id: str) -> Any:
         self.calls.append(("set_volume", (volume, device_id)))
+        return {"ok": True}
+
+    def get_playback_status(self, device_id: str) -> dict[str, Any] | None:
+        self.calls.append(("get_playback_status", (device_id,)))
+        return self.playback_status
+
+    def set_loop(self, loop_type: int, device_id: str) -> Any:
+        self.calls.append(("set_loop", (loop_type, device_id)))
         return {"ok": True}
 
     def validate_voice_device(self, device_id: str, hardware: str) -> None:
