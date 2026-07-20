@@ -172,7 +172,7 @@ class VoiceWorker:
             if self.speak_confirm and self.mina_client and self.device_id:
                 await asyncio.to_thread(self.mina_client.text_to_speech, f"好的，正在播放{track.title}", self.device_id)
             played = await asyncio.to_thread(
-                self.service.play, track.id, [track.id], "sequential", "off"
+                self.service.play, track.id, [track.id], order="sequential", repeat="off"
             )
             return {"matched_track": {"id": track.id, "title": track.title}, "stream_url": getattr(played, "path", track.path)}
         method = {

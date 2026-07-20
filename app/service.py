@@ -10,6 +10,7 @@ import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
 from .mina_client import MinaClient, MinaDeviceError, MockMinaClient
 from .models import PlaybackOrder, RepeatMode, Track
 
@@ -383,7 +384,6 @@ class MusicService:
                     )
                 else:
                     self._play_sequence = tuple(range(len(self._queue)))
-                self._play_cursor = 0
                 target_index = self._play_sequence[0]
                 return self._play_target(self._queue[target_index], target_index)
         self._state = "stopped"

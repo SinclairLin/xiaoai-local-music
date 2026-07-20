@@ -167,3 +167,35 @@ def test_monitor_shuffle_repeat_all_reshuffles_without_immediate_repeat(tmp_path
     assert len(played) == len(tracks) * 2 + 1
     assert all(left != right for left, right in zip(played, played[1:]))
     assert set(played[: len(tracks)]) == {track.id for track in tracks}
+
+
+def test_monitor_shuffle_rollover_survives_transient_play_error(tmp_path: Path) -> None:
+    service, mina, tracks = make_service(tmp_path)
+    service.play(tracks[0].id, [track.id for track in tracks], "shuffle", "all")
+    monitor = PlaybackMonitor(service, grace_sec=0)
+
+    mina.playback_status = {"status": "finished"}
+    asyncio.run(monitor.poll_once())
+    # Two tracks with the current one pinned first: the first round is (0, 1).
+    assert service.queue_state()["current"].id == tracks[1].id
+
+    original = mina.play_by_url
+    failures: list[bool] = []
+
+    def flaky_play_by_url(url: str, device_id: str) -> None:
+        if not failures:
+            failures.append(True)
+            raise RuntimeError("transient device error")
+        original(url, device_id)
+
+    mina.play_by_url = flaky_play_by_url
+    mina.playback_status = {"status": "finished"}
+    asyncio.run(monitor.poll_once())
+    assert service.queue_state()["current"].id == tracks[1].id
+
+    mina.playback_status = {"status": "finished"}
+    asyncio.run(monitor.poll_once())
+    # The retry must restart a fresh round instead of skipping its first slot
+    # and replaying the track that just finished.
+    assert service.queue_state()["current"].id == tracks[0].id
+
