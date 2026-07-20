@@ -80,6 +80,13 @@ def test_build_token_requires_user_id_and_service_token() -> None:
         build_token({"userId": "1"})
 
 
+def test_build_token_accepts_pass_token_without_account_service_token() -> None:
+    token = build_token({"userId": "1", "passToken": "passport-token"}, auth_source=COOKIE_AUTH_SOURCE)
+
+    assert token["micoapi"] == ["", ""]
+    assert token["passToken"] == "passport-token"
+
+
 def test_build_token_defaults_and_layout() -> None:
     token = build_token({"userId": "123", "serviceToken": "tok"})
     assert token["userId"] == 123
