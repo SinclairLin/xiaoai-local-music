@@ -1,112 +1,270 @@
 # xiaoai-local-music
 
-NAS Docker 上的小爱本地音乐桥接服务。它扫描只读挂载的本地曲库，提供简单网页和 HTTP API，并通过 [miservice](https://github.com/Yonsm/MiService) 直连小米云控制音箱播放。
+面向 NAS 的小爱本地音乐桥接服务：扫描本地音频文件，通过网页和 HTTP API 控制小米音箱播放。
 
-## 本地运行
+## 简介
+
+项目把 NAS 上的本地曲库转换为小爱音箱可以访问的媒体 URL，并通过 [MiService](https://github.com/Yonsm/MiService) 调用小米 MiNA 服务完成设备发现、播放和控制。它适合在家庭局域网或可信内网中运行，不需要把音频文件上传到第三方音乐平台。
+
+- 解决的问题：让小爱音箱播放 NAS 上的本地音频，并提供可脚本化的控制接口。
+- 目标用户：拥有 NAS/家庭服务器和小米音箱、需要局域网音乐播放的用户。
+- 核心价值：只读扫描曲库、真实 MiNA 设备控制、网页管理台与 API 并用。
+
+## 功能特性
+
+- 扫描 `.mp3`、`.flac`、`.m4a`、`.wav` 文件，按文件名生成曲目标题和稳定 ID。
+- 提供曲目搜索、媒体文件访问、播放队列、播放/暂停/继续/上一首/下一首/停止/音量控制。
+- 支持账号密码登录、SMS/Email OTP 验证，以及粘贴 `userId`/`serviceToken` 的 Cookies 登录。
+- 可选启用小爱对话轮询，识别中文播放和控制指令；支持播放确认播报、错误退避和环形日志。
+- 配置通过 YAML 和环境变量管理，敏感 token 以 600 权限保存到配置目录。
+
+## 截图
+
+### 播放与曲库
+
+![播放与曲库](./docs/images/dashboard.jpg)
+
+### 账号与设备
+
+![账号与设备](./docs/images/account-devices.jpg)
+
+### 语音与日志
+
+![语音与日志](./docs/images/voice-logs.jpg)
+
+## 安装
+
+### 环境要求
+
+- Python 3.10+（Docker 镜像基于 Python 3.12）。
+- Docker Engine 与 Docker Compose（使用容器部署时）。
+- 一个可读的本地曲库目录，以及音箱能够访问的 HTTP(S) 地址。
+- 小米账号凭据或有效的 MiNA `.mi.token`；也可以在管理台登录后再配置。
+
+### 安装步骤
+
+本地运行：
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-export PUBLIC_BASE_URL=http://192.168.1.10:8123
+cp config/config.yaml.example config/config.yaml
+export PUBLIC_BASE_URL=http://<NAS或主机地址>:8123
 python -m app.main
 ```
 
-访问 <http://127.0.0.1:8123/>；健康检查为 `/healthz`。
-
-服务启动时会读取 `/config/config.yaml` 中的 `music_root` 和 `public_base_url` 并扫描曲库，扫描结果缓存在内存中。`public_base_url` 必须是音箱可访问的绝对 HTTP(S) 地址，也可用环境变量 `PUBLIC_BASE_URL` 覆盖。环境变量 `MUSIC_ROOT` 优先级最高，旧变量 `MUSIC_DIR` 仍可用；如果公开地址缺失、非法或曲库目录不存在、不是目录，服务会启动失败。曲库目录不可读时服务仍会启动，但曲目列表为空。启动后的文件变化需要重启服务才能进入曲目列表。
-
-## Docker Compose
-
-部署前先复制模板：`cp compose.yml.example compose.yml`（`compose.yml` 已在 `.gitignore` 中，用于放本机路径）。模板默认使用 `ghcr.io/sinclairlin/xiaoai-local-music:latest`，并映射端口 `8123`。NAS 上可按需设置：
+Docker Compose：
 
 ```bash
-export MUSIC_HOST_DIR=/mnt/pool1/personal/media/音乐
-export CONFIG_HOST_DIR=/mnt/pool1/home/linzx6/xiaoai-local-music/config
-export PUBLIC_BASE_URL=http://nas-host:8123
+cp compose.yml.example compose.yml
+export MUSIC_HOST_DIR=/path/to/music
+export CONFIG_HOST_DIR=$PWD/config
+export PUBLIC_BASE_URL=http://<NAS或主机地址>:8123
 docker compose up -d
 ```
 
-曲库以 `/music:ro` 挂载，配置目录为 `/config`。应用读取 `/config/config.yaml`，可先复制
-`config/config.yaml.example` 为 `config/config.yaml`。配置文件使用扁平键，亦可增加嵌套的 `voice` 配置：
-`enabled`、`poll_interval_sec`、`hijack_all_play`、`speak_confirm` 和 `hardware`。
+`MUSIC_HOST_DIR` 以只读方式挂载到容器 `/music`，`CONFIG_HOST_DIR` 挂载到 `/config`。配置目录需要可写，以便保存 `.mi.token` 和通过管理台更新的配置。
 
-小米登录 token 保存在 `/config/.mi.token`，权限为 600，服务不会把它放进镜像或 Git。账号密码可以启动后在管理台「账号与设备」页填写并登录（支持验证码），无需在启动时提供；未登录时不会伪造 mock 设备。
-
-环境变量优先于 YAML 配置，空字符串不会覆盖文件值：
-
-- `XIAOMI_USER`、`XIAOMI_PASSWORD`、`MINA_DEVICE_ID`、`PUBLIC_BASE_URL`、`MUSIC_ROOT`
-- 兼容变量 `MUSIC_DIR`（仅在未设置 `MUSIC_ROOT` 时使用）
-- 运行参数 `CONFIG_DIR`、`HOST`、`PORT`
-
-配置模块提供 `Settings.save()` 显式写回配置文件；服务启动不会自动回写。保存使用同目录临时文件原子替换，配置文件包含凭据时应限制为仅服务用户可读。
-也可以直接设置 `PUBLIC_BASE_URL`、`MUSIC_ROOT`、`MUSIC_DIR`、`CONFIG_DIR`、`HOST`、`PORT`、`XIAOMI_USER`、`XIAOMI_PASSWORD` 和 `MINA_DEVICE_ID` 环境变量。
-
-曲库索引保存在内存中，不落盘；曲目新增、删除或修改后需要重启服务才会生效。当前版本不解析音频标签，曲目标题取自文件名；配置目录仅在调用 `Settings.save()` 写回配置时需要写权限。
-
-## 为何选 miservice 而非 miservice-fork
-
-| 维度 | miservice (Yonsm/MiService) | miservice-fork (yihong0618/MiService) |
-|---|---|---|
-| PyPI 最新版 | 3.0.1，2026-07-03 发布 | 2.9.3，2025-10-31 发布 |
-| GitHub | 817 stars，2026-07 活跃 | 441 stars，2026-05 的登录修复未发版到 PyPI |
-| 依赖 | 零硬依赖（aiohttp 可选，内置 biohttp 回退） | setuptools/aiohttp/mutagen/rich/fake-useragent |
-| 登录 | 支持 SMS/Email OTP 两步验证（3.0 新增，应对小米风控） | 无 OTP，异常登录需手工跑仓库脚本 |
-| 协议 | MIT | MIT |
-
-两者 API 同源，`MiNAService` 接口一致；原版发版更勤、依赖更干净且内置 OTP 支持，故选原版。可选安装 `aiohttp` 提升网络性能，未安装时 miservice 自动回退到内置 biohttp。
-
-## 登录与 OTP
-
-启动镜像不需要预先提供小米账号密码。推荐流程：启动后打开管理台的「账号与设备」页，填写小米账号密码后点「保存并登录」。若小米风控要求两步验证，页面会出现验证码输入框（验证码通过短信或邮箱发送，5 分钟内有效），输入后即可完成登录。注意：验证码填错会导致本次登录失败，重新点「保存并登录」会重新发送一条验证码。
-
-登录成功后 token 写入 `/config/.mi.token`（权限 600），后续调用自动复用，重启也不再需要重新登录。页面上的「清除 token」按钮即 `POST /api/token/clear`。在网页或 API 中修改小米账号或密码会删除旧 token，下次登录重新认证。
-
-无头场景（不方便开网页时）仍可在宿主机预登录：
+## 快速开始
 
 ```bash
-pip install miservice
-export MI_USER=<小米账号>
-export MI_PASS=<密码>
-python -m miservice mina   # 触发登录（必要时交互输入 OTP），并列出音箱设备
+# 本地运行时
+export PUBLIC_BASE_URL=http://<音箱可访问的地址>:8123
+python -m app.main
+
+# 容器运行时
+docker compose up -d
 ```
 
-登录成功后 token 写入 `~/.mi.token`，将其复制到服务的 config 目录（容器内 `/config`），重启后服务复用该 token。上述 `mina` 命令还会列出账号下的小爱音箱，可从中取 `mina_device_id`。
+启动后访问 `http://<主机地址>:8123/`，即可看到管理台。首次使用建议按以下顺序操作：
 
-### Cookies 登录（可选）
+- 在“账号与设备”中填写小米账号密码并登录，按页面提示提交 OTP；或粘贴有效的 Cookies / `.mi.token` JSON。
+- 在“音箱设备”中选择目标设备；未配置设备时，`GET /api/devices` 会尝试选中账号下第一台设备。
+- 确认 `public_base_url` 是音箱可直接访问的绝对 HTTP(S) 地址，再从曲目列表搜索并播放。
+- 如启用语音轮询，先填写 `mina_device_id` 与 `voice.hardware`，再打开语音开关。
 
-无法提供账号密码（或不愿在服务里保存密码、密码登录被风控）时，可以自己在别处手动登录小米账号，把凭证粘贴到管理台「账号与设备」页的「Cookies 登录（高级）」区块。支持两种格式：
+健康检查地址为 `/healthz`，正常时返回 `{"status":"ok"}`。
 
-- Cookie 字符串：`userId=xxx; serviceToken=xxx`（可选再带 `ssecurity`、`passToken`、`deviceId`）。可直接粘贴浏览器或抓包工具复制的完整 `Cookie:` 请求头，服务端会自动提取 Mina 所需字段并忽略其他 Cookie。可通过抓包小爱音箱 App / `api2.mina.mi.com` 请求的 Cookie 获得。
-- `.mi.token` JSON 全文：直接粘贴在其他已登录机器上生成的 `~/.mi.token` 文件内容。
+## 使用说明
 
-提交后服务会组装 token 写入 `/config/.mi.token` 并立即调用设备列表验证；验证失败会回滚，不会覆盖原本可用的 token。Cookies 登录始终只使用粘贴的 token，不会因 token 失效而回退到账号密码登录或重新发送 OTP。注意：`serviceToken` 由小米侧签发且会过期，过期后需重新获取并粘贴。
+### 基本用法
 
-## API
+服务启动时扫描曲库并建立内存快照，当前版本不落盘保存索引，也不解析音频标签；曲目标题取自文件名。文件新增、删除或重命名后需要重启服务，管理台中的“重新扫描”按钮目前仅提示该限制，服务尚未提供 `/api/rescan` 接口。
 
-- `GET /api/tracks?q=关键词`：查询曲目。
-- `GET /media/by-id/{track_id}`：获取音频文件，支持 HTTP Range。
-- `POST /api/play`：请求体 `{ "track_id": "..." }`，调用真实 MiNA 播放。
-- `POST /api/play`：可选 `queue_ids` 建立有序内存队列，并调用 Mina `play_by_url`。
-- `POST /api/voice`：请求体 `{ "text": "播放 稻香" }`。
-- `GET /api/voice/status`、`POST /api/voice/enable`：查看或启停设备语音劫持；启用时必须配置有效的 `mina_device_id` 和 `voice.hardware`。
-- `GET /api/logs`：查看最近的语音轮询、解析、播放和错误环形日志。
-- `GET /api/config`、`PUT /api/config`：读取或更新配置；密码在 GET 响应中脱敏。PUT 响应含 `restart_required`：`music_root`、`host`、`port`、`public_base_url` 的变更会写入配置文件，但需重启服务才生效。
-- `GET /api/devices`、`GET /api/queue`：查看设备和当前队列状态。尚未选择设备时会自动选中账号下第一台并在配置可写时持久化；已有选择不会被自动覆盖。
-- `POST /api/login`：用已保存的凭据启动后台登录会话（凭据缺失 422；已有会话 409）。
-- `GET /api/login/status`：轮询登录会话状态（`pending`/`otp_required`/`verifying`/`success`/`failed`，含 `otp_method`、`error`、`devices`）。
-- `POST /api/login/otp`：请求体 `{ "code": "..." }`，提交验证码；无等待中的会话返回 409。
-- `POST /api/login/cancel`：取消进行中的登录会话（幂等）。
-- `POST /api/login/cookies`：请求体 `{ "cookies": "userId=...; serviceToken=..." }`（或 `.mi.token` JSON 全文，也可用 `user_id`/`service_token` 等独立字段），写入 token 并验证；凭证不完整 422，验证失败 401 并回滚，已有登录会话进行中 409。
-- `POST /api/token/clear`：删除 `/config/.mi.token`，返回 `{ "cleared": bool }`。
-- `POST /api/next`、`/api/previous`、`/api/pause`、`/api/resume`、`/api/stop`、`/api/volume`：播放控制。
+播放时服务会把 `public_base_url/media/by-id/{track_id}` 交给 MiNA。媒体路由支持 `GET`、`HEAD` 和 HTTP Range；音箱和运行服务的主机必须能够互相访问该地址。
 
-曲目响应中的 `path` 是 `{public_base_url}/media/by-id/{track_id}`，可直接作为后续交给音箱的媒体 URL。
+### 常用示例
 
-## GHCR
+#### 查询并播放曲目
 
-`.github/workflows/image.yml` 会在推送 `main` 或 tag 时用 Buildx 构建 amd64/arm64 镜像并推送 GHCR。首次发布后请在 GitHub Package 设置中确认镜像可见性为 public。
+```bash
+BASE_URL=http://127.0.0.1:8123
+curl "$BASE_URL/api/tracks?q=稻香"
+curl -X POST "$BASE_URL/api/play" \
+  -H 'content-type: application/json' \
+  -d '{"track_id":"<曲目ID>","queue_ids":["<曲目ID>"]}'
+```
 
-## 风险
+#### 查看设备和队列
 
-服务默认假设运行在可信内网，没有认证和限流；不要直接暴露到公网。音频目录只读挂载，配置和日志目录仍需按 NAS 权限策略管理。
+```bash
+curl "$BASE_URL/api/devices"
+curl "$BASE_URL/api/queue"
+curl -X POST "$BASE_URL/api/next"
+curl -X POST "$BASE_URL/api/volume" \
+  -H 'content-type: application/json' \
+  -d '{"volume":35}'
+```
+
+#### 测试语音指令
+
+```bash
+curl -X POST "$BASE_URL/api/voice" \
+  -H 'content-type: application/json' \
+  -d '{"text":"播放 稻香"}'
+curl "$BASE_URL/api/voice/status"
+curl "$BASE_URL/api/logs?limit=20"
+```
+
+`/api/voice` 支持“播放/我要听/来一首”等播放前缀，以及“暂停、继续、下一首、上一首、停止”等控制指令。关闭 `voice.hijack_all_play` 后，播放意图不会接管，但控制类指令仍可执行。
+
+### API 概览
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/api/tracks?q=关键词` | 查询曲目 |
+| `GET`/`HEAD` | `/media/by-id/{track_id}` | 获取音频文件，支持 Range |
+| `POST` | `/api/play` | 播放曲目，可传 `queue_ids` |
+| `POST` | `/api/pause`、`/api/resume`、`/api/stop`、`/api/next`、`/api/previous` | 播放控制 |
+| `POST` | `/api/volume` | 设置 0–100 的音量 |
+| `GET` | `/api/devices`、`/api/queue` | 查看设备与队列 |
+| `GET`/`PUT` | `/api/config` | 读取或更新配置；密码读取时脱敏 |
+| `POST` | `/api/login`、`/api/login/otp`、`/api/login/cookies` | 账号/OTP/Cookies 登录 |
+| `GET` | `/api/login/status`、`/api/voice/status`、`/api/logs` | 查看登录、语音和日志状态 |
+| `POST` | `/api/voice`、`/api/voice/enable`、`/api/token/clear` | 手动执行语音指令、启停语音、清除 token |
+
+## 配置说明
+
+### 环境变量
+
+环境变量优先于 YAML；空字符串不会覆盖已有配置。`MUSIC_DIR` 是兼容旧配置的别名，`MUSIC_ROOT` 优先级更高。
+
+| 变量名 | 说明 | 默认值 |
+| --- | --- | --- |
+| `CONFIG_DIR` | 配置文件和 `.mi.token` 所在目录 | `/config` |
+| `MUSIC_ROOT` | 容器或本机曲库目录 | `/music` |
+| `MUSIC_DIR` | `MUSIC_ROOT` 的兼容别名 | 无 |
+| `PUBLIC_BASE_URL` | 音箱可访问的绝对 HTTP(S) 地址 | 必填 |
+| `HOST` | 监听地址 | `0.0.0.0` |
+| `PORT` | 监听端口 | `8123` |
+| `XIAOMI_USER` | 小米账号 | 无 |
+| `XIAOMI_PASSWORD` | 小米账号密码 | 无 |
+| `MINA_DEVICE_ID` | 默认音箱设备 ID | 无 |
+| `VOICE_ENABLED` | 是否启用语音轮询 | `false` |
+| `VOICE_POLL_INTERVAL_SEC` | 轮询间隔（秒） | `1.5` |
+| `VOICE_HIJACK_ALL_PLAY` | 是否接管播放意图 | `true` |
+| `VOICE_SPEAK_CONFIRM` | 播放前是否让音箱播报确认 | `true` |
+| `VOICE_HARDWARE` | 音箱硬件型号；启用语音时必填 | `""` |
+
+### 配置文件
+
+复制 `config/config.yaml.example` 为 `config/config.yaml` 后按需修改：
+
+```yaml
+xiaomi_user: "your-xiaomi-user"
+xiaomi_password: "your-xiaomi-password"
+mina_device_id: null
+public_base_url: "http://nas-host:8123"
+music_root: "/music"
+host: "0.0.0.0"
+port: 8123
+voice:
+  enabled: false
+  poll_interval_sec: 1.5
+  hijack_all_play: true
+  speak_confirm: true
+  hardware: "LX06"
+```
+
+`public_base_url`、`music_root`、`host`、`port` 的运行时修改会返回 `restart_required: true`，需要重启服务才会应用。账号密码修改会使旧 token 失效；登录成功后的 token 保存为 `/config/.mi.token`，文件权限为 600。
+
+## 项目结构
+
+```text
+.
+├── app/
+│   ├── main.py              # FastAPI 应用与 lifespan
+│   ├── config.py            # YAML/环境变量配置
+│   ├── routes.py            # 网页、登录、曲目、播放与配置 API
+│   ├── service.py           # 曲库扫描、内存索引与播放队列
+│   ├── mina_client.py       # MiService MiNA 适配器
+│   ├── cookie_login.py      # Cookie/.mi.token 解析与安全写入
+│   ├── voice.py             # 中文指令解析
+│   ├── voice_worker.py      # 对话轮询、派发、退避与日志
+│   └── static/index.html    # 单页管理台
+├── config/config.yaml.example
+├── compose.yml.example      # GHCR 镜像部署模板
+├── Dockerfile
+├── requirements.txt
+├── tests/                   # API、配置、登录、播放和语音测试
+└── LICENSE
+```
+
+## 开发指南
+
+### 本地开发
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+export PUBLIC_BASE_URL=http://127.0.0.1:8123
+python -m app.main
+```
+
+### 构建
+
+```bash
+docker build -t xiaoai-local-music:local .
+```
+
+若使用仓库中本机专用的 `compose.yml`（将服务配置为 `build: .`），再运行 `docker compose up -d --build`。
+
+### 测试
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+### 代码规范
+
+- 保持 API、配置字段和错误状态码与现有测试一致。
+- 外部 MiNA 调用通过可注入的客户端或数据源隔离，避免在单元测试中依赖真实账号和设备。
+- 不在日志、示例或测试输出中提交账号密码、Cookie、serviceToken、`.mi.token` 或真实局域网凭证。
+
+## 常见问题
+
+### 1. 服务启动失败，提示 `public_base_url` 或曲库目录错误怎么办？
+
+`public_base_url` 必须是带主机名/IP 和端口的绝对 `http://` 或 `https://` 地址，且音箱能访问；`music_root` 必须存在并且是目录。启动阶段扫描失败会阻止服务启动，请先检查挂载路径和权限。
+
+### 2. 端口被占用怎么办？
+
+修改 `PORT` 或 YAML 中的 `port`，并同步修改 Docker Compose 的端口映射。例如使用 `PORT=18123` 时，把宿主机映射改为 `18123:18123`，同时更新 `PUBLIC_BASE_URL`。
+
+### 3. 登录成功但无法播放怎么办？
+
+先调用 `/api/devices` 确认账号能列出设备并选择正确的 `mina_device_id`，再确认音箱能访问曲目响应中的 `path` URL。Cookies 登录需要同时提供 `userId` 和 `serviceToken`；serviceToken 过期后要重新获取。
+
+### 4. 新增歌曲为什么没有出现在列表里？
+
+曲库索引只在启动时建立并缓存在内存中，当前没有可用的重扫 API。新增、删除或重命名文件后请重启服务；仅修改音频标签也不会改变标题，因为标题取自文件名。
+
+## 安全提示
+
+服务默认没有 Web 认证和限流，请只在可信内网使用，不要直接暴露到公网。`public_base_url`、小米账号、Cookie、`serviceToken` 和 `.mi.token` 都属于敏感信息；配置目录应限制为服务用户可读，日志和截图也不要包含这些内容。
+
+## 许可证
+
+[MIT License](./LICENSE)

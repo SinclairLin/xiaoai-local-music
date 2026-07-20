@@ -12,5 +12,5 @@ services:
       MINA_DEVICE_ID: ${MINA_DEVICE_ID:-}
       PORT: "8123"
     volumes:
-      - ${MUSIC_HOST_DIR:-/mnt/pool1/personal/media/音乐}:/music:ro
+      - ${MUSIC_HOST_DIR:-/path/to/music}:/music:ro
       - ${CONFIG_HOST_DIR:-./config}:/config
